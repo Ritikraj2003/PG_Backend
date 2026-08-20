@@ -34,6 +34,16 @@ const limiter = rateLimit({
 });
 app.use('/api', limiter);
 
+// Root Route
+app.get('/', (req: Request, res: Response) => {
+  return res.json({
+    success: true,
+    message: '🚀 PG & Rental House Management Backend API is running on Vercel!',
+    health: '/health',
+    timestamp: new Date()
+  });
+});
+
 // Health Check Endpoint
 app.get('/health', (req: Request, res: Response) => {
   return sendSuccess(res, { timestamp: new Date(), uptime: process.uptime() }, 'API is healthy and operational');

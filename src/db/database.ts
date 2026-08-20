@@ -4,11 +4,12 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const connectionString = process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/pg_management_db';
+const isLocal = connectionString.includes('localhost') || connectionString.includes('127.0.0.1');
 
 export const pool = new Pool({
   connectionString,
-  ssl: { rejectUnauthorized: false },
-  max: 20,
+  ssl: isLocal ? false : { rejectUnauthorized: false },
+  max: 10,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000,
 });
