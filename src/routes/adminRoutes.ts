@@ -10,14 +10,24 @@ const router = Router();
 
 router.use(authenticate, authorizeRoles('SUPER_ADMIN'));
 
-// Configure multer for file uploads in backend/uploads directory
-const uploadsDir = path.join(process.cwd(), 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
+import os from 'os';
+
+const getUploadsDir = () => {
+  const isVercel = process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME;
+  const baseDir = isVercel ? os.tmpdir() : process.cwd();
+  const dir = path.join(baseDir, 'uploads');
+  try {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+  } catch (err) {
+    console.warn('Could not create uploads dir:', err);
+  }
+  return dir;
+};
 
 const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadsDir),
+  destination: (_req, _file, cb) => cb(null, getUploadsDir()),
   filename: (_req, file, cb) => {
     const ext = path.extname(file.originalname) || '.png';
     const fieldName = file.fieldname || 'file';

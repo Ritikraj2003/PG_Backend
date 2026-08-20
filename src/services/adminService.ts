@@ -2,6 +2,7 @@ import pool from '../db/database';
 import { hashPassword } from '../utils/password';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 
 function saveBase64File(base64Data: string | undefined, prefix: string): string | null {
   if (!base64Data || typeof base64Data !== 'string') return null;
@@ -9,7 +10,9 @@ function saveBase64File(base64Data: string | undefined, prefix: string): string 
     return base64Data; // Already a URL or path
   }
   try {
-    const uploadsDir = path.join(process.cwd(), 'uploads');
+    const isVercel = process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME;
+    const baseDir = isVercel ? os.tmpdir() : process.cwd();
+    const uploadsDir = path.join(baseDir, 'uploads');
     if (!fs.existsSync(uploadsDir)) {
       fs.mkdirSync(uploadsDir, { recursive: true });
     }

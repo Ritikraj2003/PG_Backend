@@ -18,8 +18,18 @@ app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+import fs from 'fs';
+import os from 'os';
+
 // Static Files - Uploads Directory
-app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+const isVercel = process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME;
+const uploadsDir = isVercel ? path.join(os.tmpdir(), 'uploads') : path.join(process.cwd(), 'uploads');
+try {
+  if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  }
+} catch (e) {}
+app.use('/uploads', express.static(uploadsDir));
 
 // Request Logging
 if (process.env.NODE_ENV !== 'test') {
