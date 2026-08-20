@@ -1,0 +1,79 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "PG & Rental House Management SaaS API",
+    "version": "1.0.0",
+    "description": "Production-ready backend API for PG and Rental House Management SaaS application."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:5000/api",
+      "description": "Local Development Server"
+    }
+  ],
+  "paths": {
+    "/auth/register": {
+      "post": {
+        "summary": "Register a new user",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "full_name": { "type": "string" },
+                  "email": { "type": "string" },
+                  "mobile_number": { "type": "string" },
+                  "password": { "type": "string" },
+                  "role": { "type": "string", "enum": ["TENANT", "OWNER", "STAFF"] }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "User registered" }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "summary": "Login user with email/mobile and password",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "emailOrMobile": { "type": "string" },
+                  "password": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Login successful" }
+        }
+      }
+    },
+    "/public/properties": {
+      "get": {
+        "summary": "Get list of active properties and branches",
+        "responses": {
+          "200": { "description": "List of properties" }
+        }
+      }
+    },
+    "/public/rooms": {
+      "get": {
+        "summary": "Get public room listing with filters",
+        "responses": {
+          "200": { "description": "List of rooms" }
+        }
+      }
+    }
+  }
+}
