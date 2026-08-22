@@ -184,7 +184,7 @@ CREATE TABLE IF NOT EXISTS branch_amenities (
 
 CREATE TABLE IF NOT EXISTS tenants (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
     branch_id UUID REFERENCES branches(id) ON DELETE CASCADE,
     tenant_code VARCHAR(50) UNIQUE NOT NULL,
     full_name VARCHAR(150) NOT NULL,

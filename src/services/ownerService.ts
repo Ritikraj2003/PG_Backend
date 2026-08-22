@@ -24,7 +24,10 @@ export class OwnerService {
       [branchIds]
     );
     const tenantsRes = await pool.query(
-      'SELECT COUNT(*) as count FROM tenants WHERE branch_id = ANY($1) AND status = \'ACTIVE\'',
+      `SELECT COUNT(DISTINCT t.id) as count 
+       FROM tenants t
+       JOIN stay_allocations sa ON t.id = sa.tenant_id
+       WHERE t.branch_id = ANY($1) AND t.status = 'ACTIVE' AND sa.is_active = TRUE`,
       [branchIds]
     );
     const revenueRes = await pool.query(
@@ -130,7 +133,23 @@ export class OwnerService {
   }
 
   public static async getRoomTypes() {
-    const res = await pool.query('SELECT * FROM room_types ORDER BY name ASC');
+    let res = await pool.query('SELECT * FROM room_types ORDER BY name ASC');
+    if (res.rows.length === 0) {
+      const defaultTypes = [
+        { name: 'Single Private Room', capacity: 1, description: 'Private 1 Bed Room' },
+        { name: 'Double Sharing Room', capacity: 2, description: 'Standard 2 Bed Sharing' },
+        { name: 'Triple Sharing Room', capacity: 3, description: '3 Bed Sharing' },
+        { name: 'Four Sharing Room', capacity: 4, description: '4 Bed Sharing' },
+        { name: 'Deluxe AC Suite', capacity: 1, description: 'Luxury AC Private Suite' },
+      ];
+      for (const t of defaultTypes) {
+        await pool.query(
+          `INSERT INTO room_types (name, capacity, description) VALUES ($1, $2, $3)`,
+          [t.name, t.capacity, t.description]
+        );
+      }
+      res = await pool.query('SELECT * FROM room_types ORDER BY name ASC');
+    }
     return res.rows;
   }
 
@@ -310,15 +329,18 @@ export class OwnerService {
       if (bRes.rows.length === 0) throw new Error('Booking not found');
       const booking = bRes.rows[0];
 
-      if (status === 'CONFIRMED' && booking.status !== 'CONFIRMED') {
+      if ((status === 'CONFIRMED' || status === 'APPROVED') && booking.status !== 'CONFIRMED' && booking.status !== 'APPROVED') {
         // Reserve bed safely
         if (booking.bed_id) {
           await client.query('UPDATE beds SET status = \'RESERVED\' WHERE id = $1', [booking.bed_id]);
         }
         await client.query('UPDATE rooms SET status = \'RESERVED\' WHERE id = $1', [booking.room_id]);
 
+        // Link tenant profile to this property branch
+        await client.query('UPDATE tenants SET branch_id = $1, status = \'ACTIVE\', updated_at = NOW() WHERE id = $2', [booking.branch_id, booking.tenant_id]);
+
         // Auto generate rent invoice if not present
-        const invCheck = await client.query('SELECT COUNT(*) FROM rent_invoices WHERE tenant_id = $1 AND branch_id = $2', [booking.tenant_id, booking.branch_id]);
+        const invCheck = await client.query('SELECT COUNT(*) FROM rent_invoices WHERE tenant_id = $1 AND branch_id = $2 AND status IN (\'PENDING\', \'PARTIALLY_PAID\')', [booking.tenant_id, booking.branch_id]);
         if (parseInt(invCheck.rows[0].count) === 0) {
           const invNum = `INV-${Math.floor(10000000 + Math.random() * 90000000)}`;
           const billingMonth = new Date().toISOString().slice(0, 7);

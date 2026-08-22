@@ -2,26 +2,46 @@ import pool from '../db/database';
 
 export class TenantService {
   public static async getTenantDashboard(userId: string) {
-    const tenantRes = await pool.query('SELECT * FROM tenants WHERE user_id = $1', [userId]);
-    if (tenantRes.rows.length === 0) throw new Error('Tenant profile not found');
+    const tenantRes = await pool.query('SELECT * FROM tenants WHERE user_id = $1 ORDER BY created_at DESC', [userId]);
+    const tenant = tenantRes.rows[0] || null;
 
-    const tenant = tenantRes.rows[0];
+    if (!tenant) {
+      return {
+        tenant: null,
+        registeredProperty: null,
+        currentStay: null,
+        pendingInvoices: [],
+        recentComplaints: [],
+        documents: [],
+        summary: {
+          pendingInvoicesAmount: 0,
+        },
+      };
+    }
 
-    // Fetch registered property & branch details
+    // Fetch registered property & branch details ONLY IF tenant has an active stay allocation or approved booking!
     let registeredProperty = null;
     if (tenant.branch_id) {
-      const propRes = await pool.query(
-        `SELECT b.id as branch_id, b.branch_name, b.address as branch_address, b.city as branch_city,
-                p.id as property_id, p.property_name, p.property_type, p.description as property_description,
-                po.business_name as owner_business_name, po.contact_number as owner_contact, po.email as owner_email
-         FROM branches b
-         JOIN properties p ON b.property_id = p.id
-         JOIN property_owners po ON p.owner_id = po.id
-         WHERE b.id = $1`,
-        [tenant.branch_id]
+      const activeStayOrApproved = await pool.query(
+        `SELECT id FROM bookings WHERE tenant_id = $1 AND status IN ('APPROVED', 'CONFIRMED', 'CHECKED_IN')
+         UNION
+         SELECT id FROM stay_allocations WHERE tenant_id = $1 AND is_active = TRUE`,
+        [tenant.id]
       );
-      if (propRes.rows.length > 0) {
-        registeredProperty = propRes.rows[0];
+      if (activeStayOrApproved.rows.length > 0) {
+        const propRes = await pool.query(
+          `SELECT b.id as branch_id, b.branch_name, b.address as branch_address, b.city as branch_city,
+                  p.id as property_id, p.property_name, p.property_type, p.description as property_description,
+                  po.business_name as owner_business_name, po.contact_number as owner_contact, po.email as owner_email
+           FROM branches b
+           JOIN properties p ON b.property_id = p.id
+           JOIN property_owners po ON p.owner_id = po.id
+           WHERE b.id = $1`,
+          [tenant.branch_id]
+        );
+        if (propRes.rows.length > 0) {
+          registeredProperty = propRes.rows[0];
+        }
       }
     }
 
@@ -96,13 +116,13 @@ export class TenantService {
     try {
       await client.query('BEGIN');
 
-      // 1. Get User info
+      // 1. Get Global User info
       const userRes = await client.query('SELECT * FROM users WHERE id = $1', [userId]);
       if (userRes.rows.length === 0) throw new Error('User account not found');
       const user = userRes.rows[0];
 
-      // 2. Check or Create Tenant Profile
-      let tenantRes = await client.query('SELECT id FROM tenants WHERE user_id = $1', [userId]);
+      // 2. Copy Global User Data to Property Branch Tenant Profile upon booking
+      let tenantRes = await client.query('SELECT id FROM tenants WHERE user_id = $1 AND branch_id = $2', [userId, data.branch_id]);
       let tenantId: string;
 
       if (tenantRes.rows.length === 0) {
@@ -129,7 +149,6 @@ export class TenantService {
         tenantId = newTenant.rows[0].id;
       } else {
         tenantId = tenantRes.rows[0].id;
-        // Update profile fields
         await client.query(
           `UPDATE tenants
            SET occupation = COALESCE($1, occupation),

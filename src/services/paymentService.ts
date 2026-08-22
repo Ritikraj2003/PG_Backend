@@ -97,6 +97,30 @@ export class PaymentService {
         ]
       );
 
+      if (newStatus === 'PAID') {
+        // If there's an approved booking for this tenant in this branch, activate stay allocation & mark bed OCCUPIED
+        const bkRes = await client.query(
+          `SELECT * FROM bookings WHERE tenant_id = $1 AND branch_id = $2 AND status IN ('APPROVED', 'CONFIRMED') ORDER BY created_at DESC LIMIT 1`,
+          [invoice.tenant_id, invoice.branch_id]
+        );
+        if (bkRes.rows.length > 0) {
+          const bk = bkRes.rows[0];
+          const stayRes = await client.query(`SELECT id FROM stay_allocations WHERE tenant_id = $1 AND is_active = TRUE`, [invoice.tenant_id]);
+          if (stayRes.rows.length === 0) {
+            await client.query(
+              `INSERT INTO stay_allocations (branch_id, tenant_id, room_id, bed_id, start_date)
+               VALUES ($1, $2, $3, $4, CURRENT_DATE)`,
+              [invoice.branch_id, invoice.tenant_id, bk.room_id, bk.bed_id || null]
+            );
+            if (bk.bed_id) {
+              await client.query('UPDATE beds SET status = \'OCCUPIED\', updated_at = NOW() WHERE id = $1', [bk.bed_id]);
+            }
+            await client.query('UPDATE rooms SET status = \'PARTIALLY_OCCUPIED\', updated_at = NOW() WHERE id = $1', [bk.room_id]);
+            await client.query('UPDATE bookings SET status = \'CHECKED_IN\', updated_at = NOW() WHERE id = $1', [bk.id]);
+          }
+        }
+      }
+
       await client.query('COMMIT');
       return paymentRes.rows[0];
     } catch (err) {

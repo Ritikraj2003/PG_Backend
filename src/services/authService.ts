@@ -46,62 +46,7 @@ export class AuthService {
         );
       }
 
-      // If Tenant, auto-create Tenant profile linked to selected PG Branch
-      if (roleName === 'TENANT') {
-        let targetBranchId: string | null = null;
-
-        if (data.branch_id) {
-          // Check if passed ID is a valid branch ID directly
-          const branchCheck = await client.query(
-            'SELECT id FROM branches WHERE id = $1',
-            [data.branch_id]
-          );
-          if (branchCheck.rows.length > 0) {
-            targetBranchId = branchCheck.rows[0].id;
-          } else {
-            // Check if passed ID is a property_id that owns branches
-            const propBranchCheck = await client.query(
-              'SELECT id FROM branches WHERE property_id = $1 LIMIT 1',
-              [data.branch_id]
-            );
-            if (propBranchCheck.rows.length > 0) {
-              targetBranchId = propBranchCheck.rows[0].id;
-            }
-          }
-        }
-
-        // Fallback: Pick any active branch in system
-        if (!targetBranchId) {
-          const firstBranch = await client.query('SELECT id FROM branches WHERE is_active = TRUE LIMIT 1');
-          if (firstBranch.rows.length > 0) {
-            targetBranchId = firstBranch.rows[0].id;
-          }
-        }
-
-        // Safety Net: Create a fallback branch if none exists at all
-        if (!targetBranchId) {
-          const propRes = await client.query('SELECT id FROM properties LIMIT 1');
-          if (propRes.rows.length > 0) {
-            const fallbackBranch = await client.query(
-              `INSERT INTO branches (property_id, branch_code, branch_name, address, city, state)
-               VALUES ($1, 'BR-MAIN-01', 'Main Branch', 'Main Address', 'Bengaluru', 'Karnataka')
-               RETURNING id`,
-              [propRes.rows[0].id]
-            );
-            targetBranchId = fallbackBranch.rows[0].id;
-          }
-        }
-
-        if (targetBranchId) {
-          const tenantCode = `TNT-${Date.now().toString().slice(-4)}`;
-          await client.query(
-            `INSERT INTO tenants (user_id, branch_id, tenant_code, full_name, mobile_number, email, status)
-             VALUES ($1, $2, $3, $4, $5, $6, 'ACTIVE')
-             ON CONFLICT (user_id) DO NOTHING`,
-            [user.id, targetBranchId, tenantCode, data.full_name, data.mobile_number, data.email]
-          );
-        }
-      }
+      // Global registration completed (Tenant profile is created/copied to specific branch upon booking)
 
       await client.query('COMMIT');
 
