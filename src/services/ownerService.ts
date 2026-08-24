@@ -2,48 +2,58 @@ import pool from '../db/database';
 import { hashPassword } from '../utils/password';
 
 export class OwnerService {
-  public static async getDashboardData(ownerId: string) {
+  public static async getDashboardData(ownerId: string, targetBranchId?: string) {
     const propRes = await pool.query('SELECT id, property_name FROM properties WHERE owner_id = $1', [ownerId]);
     if (propRes.rows.length === 0) return { property: null, branches: [], summary: {} };
 
     const property = propRes.rows[0];
 
-    const branchesRes = await pool.query('SELECT * FROM branches WHERE property_id = $1', [property.id]);
-    const branchIds = branchesRes.rows.map(b => b.id);
+    const branchesRes = await pool.query('SELECT * FROM branches WHERE property_id = $1 ORDER BY created_at ASC', [property.id]);
+    const allBranchIds = branchesRes.rows.map(b => b.id);
 
-    if (branchIds.length === 0) {
-      return { property, branches: [], summary: { totalBranches: 0, totalRooms: 0, totalBeds: 0, activeTenants: 0, monthlyRevenue: 0 } };
+    if (allBranchIds.length === 0) {
+      return { property, branches: [], summary: { totalBranches: 0, totalRooms: 0, totalBeds: 0, activeTenants: 0, totalRevenue: 0, pendingRent: 0 } };
     }
 
+    // Strict single-branch selection logic
+    let activeBranchId = targetBranchId;
+    if (!activeBranchId || !allBranchIds.includes(activeBranchId)) {
+      activeBranchId = allBranchIds[0];
+    }
+
+    const activeBranch = branchesRes.rows.find(b => b.id === activeBranchId);
+
     const roomsRes = await pool.query(
-      'SELECT COUNT(*) as count FROM rooms WHERE branch_id = ANY($1)',
-      [branchIds]
+      'SELECT COUNT(*) as count FROM rooms WHERE branch_id = $1',
+      [activeBranchId]
     );
     const bedsRes = await pool.query(
-      'SELECT COUNT(*) as count, COUNT(CASE WHEN status=\'OCCUPIED\' THEN 1 END) as occupied FROM beds WHERE branch_id = ANY($1)',
-      [branchIds]
+      'SELECT COUNT(*) as count, COUNT(CASE WHEN status=\'OCCUPIED\' THEN 1 END) as occupied FROM beds WHERE branch_id = $1',
+      [activeBranchId]
     );
     const tenantsRes = await pool.query(
       `SELECT COUNT(DISTINCT t.id) as count 
        FROM tenants t
        JOIN stay_allocations sa ON t.id = sa.tenant_id
-       WHERE t.branch_id = ANY($1) AND t.status = 'ACTIVE' AND sa.is_active = TRUE`,
-      [branchIds]
+       WHERE t.branch_id = $1 AND t.status = 'ACTIVE' AND sa.is_active = TRUE`,
+      [activeBranchId]
     );
     const revenueRes = await pool.query(
-      'SELECT COALESCE(SUM(amount), 0) as total FROM rent_payments WHERE branch_id = ANY($1) AND payment_status = \'SUCCESS\'',
-      [branchIds]
+      'SELECT COALESCE(SUM(amount), 0) as total FROM rent_payments WHERE branch_id = $1 AND payment_status = \'SUCCESS\'',
+      [activeBranchId]
     );
     const pendingRentRes = await pool.query(
-      'SELECT COALESCE(SUM(balance_amount), 0) as total FROM rent_invoices WHERE branch_id = ANY($1) AND status IN (\'PENDING\', \'PARTIALLY_PAID\', \'OVERDUE\')',
-      [branchIds]
+      'SELECT COALESCE(SUM(balance_amount), 0) as total FROM rent_invoices WHERE branch_id = $1 AND status IN (\'PENDING\', \'PARTIALLY_PAID\', \'OVERDUE\')',
+      [activeBranchId]
     );
 
     return {
       property,
+      branch: activeBranch,
       branches: branchesRes.rows,
+      selectedBranchId: activeBranchId,
       summary: {
-        totalBranches: branchIds.length,
+        totalBranches: branchesRes.rows.length,
         totalRooms: parseInt(roomsRes.rows[0].count),
         totalBeds: parseInt(bedsRes.rows[0].count),
         occupiedBeds: parseInt(bedsRes.rows[0].occupied),

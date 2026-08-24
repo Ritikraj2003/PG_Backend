@@ -8,7 +8,8 @@ export class OwnerController {
       const ownerId = req.user!.ownerId;
       if (!ownerId) return sendError(res, 'User is not a property owner', 403);
 
-      const dashboard = await OwnerService.getDashboardData(ownerId);
+      const branchId = req.query.branch_id as string | undefined;
+      const dashboard = await OwnerService.getDashboardData(ownerId, branchId);
       return sendSuccess(res, dashboard, 'Owner dashboard retrieved');
     } catch (err: any) {
       return sendError(res, err.message, 500);

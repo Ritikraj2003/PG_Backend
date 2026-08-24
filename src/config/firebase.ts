@@ -5,11 +5,12 @@ let firebaseApp: admin.app.App | null = null;
 
 try {
   if (config.firebase.projectId && config.firebase.clientEmail && config.firebase.privateKey) {
+    const formattedPrivateKey = config.firebase.privateKey.replace(/\\n/g, '\n');
     firebaseApp = admin.initializeApp({
       credential: admin.credential.cert({
         projectId: config.firebase.projectId,
         clientEmail: config.firebase.clientEmail,
-        privateKey: config.firebase.privateKey,
+        privateKey: formattedPrivateKey,
       }),
     });
     console.log('Firebase Admin SDK initialized successfully');
