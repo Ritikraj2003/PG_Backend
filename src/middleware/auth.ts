@@ -40,13 +40,6 @@ export const authenticate = async (req: Request, res: Response, next: NextFuncti
 
     const row = userRes.rows[0];
 
-    // Find optional property_owner id
-    let ownerId: string | undefined;
-    const ownerRes = await pool.query('SELECT id FROM property_owners WHERE user_id = $1', [row.id]);
-    if (ownerRes.rows.length > 0) {
-      ownerId = ownerRes.rows[0].id;
-    }
-
     // Find optional tenant id & branch id
     let tenantId: string | undefined;
     let branchId: string | undefined;
@@ -62,7 +55,7 @@ export const authenticate = async (req: Request, res: Response, next: NextFuncti
       fullName: row.full_name,
       mobileNumber: row.mobile_number,
       roles: row.roles,
-      ownerId,
+      ownerId: row.roles.includes('COMPANY_ADMIN') ? row.id : undefined,
       tenantId,
       branchId,
     };

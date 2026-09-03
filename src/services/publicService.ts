@@ -3,10 +3,10 @@ import pool from '../db/database';
 export class PublicService {
   public static async getProperties(city?: string, type?: string) {
     let sql = `
-      SELECT p.*, po.business_name as owner_business_name,
+      SELECT p.*, po.full_name as owner_business_name,
              (SELECT COUNT(*) FROM branches b WHERE b.property_id = p.id AND b.is_active = TRUE) as total_branches
       FROM properties p
-      JOIN property_owners po ON p.owner_id = po.id
+      JOIN users po ON p.owner_id = po.id
       WHERE p.is_active = TRUE
     `;
     const params: any[] = [];
@@ -28,9 +28,9 @@ export class PublicService {
 
   public static async getPropertyById(id: string) {
     const propRes = await pool.query(
-      `SELECT p.*, po.business_name as owner_business_name
+      `SELECT p.*, po.full_name as owner_business_name
        FROM properties p
-       JOIN property_owners po ON p.owner_id = po.id
+       JOIN users po ON p.owner_id = po.id
        WHERE p.id = $1 AND p.is_active = TRUE`,
       [id]
     );
@@ -84,24 +84,20 @@ export class PublicService {
 
   public static async getRooms(branch_id?: string, min_rent?: number, max_rent?: number, status?: string) {
     let sql = `
-      SELECT r.*, b.branch_name, b.city, p.property_name, p.property_type, rt.name as room_type_name,
+      SELECT r.*, b.name as branch_name, b.city, p.name as property_name,
              (SELECT COUNT(*) FROM beds bd WHERE bd.room_id = r.id AND bd.status = 'AVAILABLE') as available_beds,
              (SELECT COUNT(*) FROM beds bd WHERE bd.room_id = r.id) as total_beds,
              COALESCE(
                (SELECT json_agg(json_build_object(
                  'id', bd.id,
                  'bed_number', bd.bed_number,
-                 'bed_name', bd.bed_name,
-                 'monthly_rent', bd.monthly_rent,
-                 'security_deposit', bd.security_deposit,
                  'status', bd.status
-               ) ORDER BY bd.bed_number ASC) FROM beds bd WHERE bd.room_id = r.id AND bd.is_active = TRUE), '[]'::json
+               ) ORDER BY bd.bed_number ASC) FROM beds bd WHERE bd.room_id = r.id), '[]'::json
              ) as beds
       FROM rooms r
       JOIN branches b ON r.branch_id = b.id
       JOIN properties p ON b.property_id = p.id
-      LEFT JOIN room_types rt ON r.room_type_id = rt.id
-      WHERE r.is_active = TRUE AND b.is_active = TRUE
+      WHERE r.status != 'INACTIVE' AND b.is_active = TRUE
     `;
     const params: any[] = [];
 
@@ -130,13 +126,11 @@ export class PublicService {
 
   public static async getRoomById(id: string) {
     const roomRes = await pool.query(
-      `SELECT r.*, b.branch_name, b.address as branch_address, b.city, p.property_name, rt.name as room_type_name, f.floor_name
+      `SELECT r.*, b.name as branch_name, b.address as branch_address, b.city, p.name as property_name
        FROM rooms r
        JOIN branches b ON r.branch_id = b.id
        JOIN properties p ON b.property_id = p.id
-       LEFT JOIN room_types rt ON r.room_type_id = rt.id
-       LEFT JOIN floors f ON r.floor_id = f.id
-       WHERE r.id = $1 AND r.is_active = TRUE`,
+       WHERE r.id = $1 AND r.status != 'INACTIVE'`,
       [id]
     );
 

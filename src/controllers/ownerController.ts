@@ -3,11 +3,10 @@ import { OwnerService } from '../services/ownerService';
 import { sendSuccess, sendError } from '../utils/response';
 
 export class OwnerController {
+  // DASHBOARD
   public static async getDashboard(req: Request, res: Response) {
     try {
-      const ownerId = req.user!.ownerId;
-      if (!ownerId) return sendError(res, 'User is not a property owner', 403);
-
+      const ownerId = req.user!.id;
       const branchId = req.query.branch_id as string | undefined;
       const dashboard = await OwnerService.getDashboardData(ownerId, branchId);
       return sendSuccess(res, dashboard, 'Owner dashboard retrieved');
@@ -18,9 +17,7 @@ export class OwnerController {
 
   public static async getBranches(req: Request, res: Response) {
     try {
-      const ownerId = req.user!.ownerId;
-      if (!ownerId) return sendError(res, 'User is not a property owner', 403);
-
+      const ownerId = req.user!.id;
       const branches = await OwnerService.getOwnerBranches(ownerId);
       return sendSuccess(res, branches, 'Owner branches retrieved');
     } catch (err: any) {
@@ -28,107 +25,48 @@ export class OwnerController {
     }
   }
 
-  // Floors
-  public static async createFloor(req: Request, res: Response) {
-    try {
-      const { branch_id, floor_number, floor_name, description } = req.body;
-      const floor = await OwnerService.createFloor(branch_id, floor_number, floor_name, description);
-      return sendSuccess(res, floor, 'Floor created', 201);
-    } catch (err: any) {
-      return sendError(res, err.message, 400);
-    }
-  }
-
-  public static async getFloors(req: Request, res: Response) {
+  // BRANCH SETTINGS
+  public static async getBranchSettings(req: Request, res: Response) {
     try {
       const { branch_id } = req.query;
-      const floors = await OwnerService.getFloors(branch_id as string);
-      return sendSuccess(res, floors, 'Floors list retrieved');
+      if (!branch_id) return sendError(res, 'branch_id is required', 400);
+      const settings = await OwnerService.getBranchSettings(branch_id as string);
+      return sendSuccess(res, settings, 'Branch settings retrieved');
     } catch (err: any) {
       return sendError(res, err.message, 500);
     }
   }
 
-  public static async updateFloor(req: Request, res: Response) {
+  public static async updateBranchSettings(req: Request, res: Response) {
     try {
-      const { id } = req.params;
-      const { floor_number, floor_name, description } = req.body;
-      const floor = await OwnerService.updateFloor(id, floor_number, floor_name, description);
-      return sendSuccess(res, floor, 'Floor updated successfully');
+      const { branch_id, razorpay_key, razorpay_secret, upi_id, smtp_email, smtp_password } = req.body;
+      let upi_qr_url = req.body.upi_qr_url;
+      if (req.file) {
+        upi_qr_url = `/uploads/${req.file.filename}`;
+      }
+      const data = { razorpay_key, razorpay_secret, upi_id, upi_qr_url, smtp_email, smtp_password };
+      const settings = await OwnerService.updateBranchSettings(branch_id, data);
+      return sendSuccess(res, settings, 'Branch settings updated');
     } catch (err: any) {
       return sendError(res, err.message, 400);
     }
   }
 
-  public static async deleteFloor(req: Request, res: Response) {
-    try {
-      const { id } = req.params;
-      const result = await OwnerService.deleteFloor(id);
-      return sendSuccess(res, result, 'Floor deleted successfully');
-    } catch (err: any) {
-      return sendError(res, err.message, 400);
-    }
-  }
-
-  // Room Types
-  public static async createRoomType(req: Request, res: Response) {
-    try {
-      const { name, capacity, description } = req.body;
-      const roomType = await OwnerService.createRoomType(name, capacity, description);
-      return sendSuccess(res, roomType, 'Room type created', 201);
-    } catch (err: any) {
-      return sendError(res, err.message, 400);
-    }
-  }
-
-  public static async getRoomTypes(req: Request, res: Response) {
-    try {
-      const types = await OwnerService.getRoomTypes();
-      return sendSuccess(res, types, 'Room types retrieved');
-    } catch (err: any) {
-      return sendError(res, err.message, 500);
-    }
-  }
-
-  // Rooms
+  // ROOMS & BEDS
   public static async createRoom(req: Request, res: Response) {
     try {
-      let imageUrls: string[] = [];
-
-      // Extract files uploaded via multipart/form-data
-      if (req.files && Array.isArray(req.files) && req.files.length > 0) {
-        imageUrls = (req.files as Express.Multer.File[]).map((file) => `/uploads/${file.filename}`);
-      } else if (req.body.images) {
-        if (typeof req.body.images === 'string') {
-          try {
-            imageUrls = JSON.parse(req.body.images);
-          } catch {
-            imageUrls = [req.body.images];
-          }
-        } else if (Array.isArray(req.body.images)) {
-          imageUrls = req.body.images;
-        }
-      }
-
       const roomData = {
         branch_id: req.body.branch_id,
-        floor_id: req.body.floor_id || undefined,
-        room_type_id: req.body.room_type_id || undefined,
+        floor_number: req.body.floor_number ? parseInt(req.body.floor_number) : 1,
         room_number: req.body.room_number,
-        room_name: req.body.room_name || undefined,
+        room_type: req.body.room_type,
         monthly_rent: req.body.monthly_rent ? parseFloat(req.body.monthly_rent) : 0,
         security_deposit: req.body.security_deposit ? parseFloat(req.body.security_deposit) : 0,
-        electricity_charge: req.body.electricity_charge ? parseFloat(req.body.electricity_charge) : 0,
-        maintenance_charge: req.body.maintenance_charge ? parseFloat(req.body.maintenance_charge) : 0,
-        description: req.body.description || undefined,
-        images: imageUrls,
-        capacity: req.body.capacity ? parseInt(req.body.capacity) : undefined,
+        capacity: req.body.capacity ? parseInt(req.body.capacity) : 1,
       };
-
       const room = await OwnerService.createRoom(roomData);
       return sendSuccess(res, room, 'Room created successfully', 201);
     } catch (err: any) {
-      console.error('Error in createRoom:', err);
       return sendError(res, err.message, 400);
     }
   }
@@ -143,7 +81,6 @@ export class OwnerController {
     }
   }
 
-  // Beds
   public static async createBed(req: Request, res: Response) {
     try {
       const bed = await OwnerService.createBed(req.body);
@@ -183,7 +120,7 @@ export class OwnerController {
     }
   }
 
-  // Tenants
+  // TENANTS & BOOKINGS
   public static async getTenants(req: Request, res: Response) {
     try {
       const { branch_id } = req.query;
@@ -194,7 +131,6 @@ export class OwnerController {
     }
   }
 
-  // Bookings
   public static async getBookings(req: Request, res: Response) {
     try {
       const { branch_id } = req.query;
@@ -208,38 +144,30 @@ export class OwnerController {
   public static async updateBookingStatus(req: Request, res: Response) {
     try {
       const { id } = req.params;
-      const { status, remarks } = req.body;
-      const booking = await OwnerService.updateBookingStatus(id, status, remarks);
+      const { status, remarks, refund_amount } = req.body;
+      const refund = refund_amount ? parseFloat(refund_amount) : undefined;
+      const booking = await OwnerService.updateBookingStatus(id, status, remarks, refund);
       return sendSuccess(res, booking, 'Booking status updated');
     } catch (err: any) {
       return sendError(res, err.message, 400);
     }
   }
 
-  // Check-In / Check-Out
-  public static async processCheckIn(req: Request, res: Response) {
-    try {
-      const result = await OwnerService.processCheckIn(req.body);
-      return sendSuccess(res, result, 'Check-in processed successfully');
-    } catch (err: any) {
-      return sendError(res, err.message, 400);
-    }
-  }
-
-  public static async processCheckOut(req: Request, res: Response) {
-    try {
-      const result = await OwnerService.processCheckOut(req.body);
-      return sendSuccess(res, result, 'Check-out processed successfully');
-    } catch (err: any) {
-      return sendError(res, err.message, 400);
-    }
-  }
-
-  // Rent Invoices & Payments
+  // RENT INVOICES & PAYMENTS
   public static async createRentInvoice(req: Request, res: Response) {
     try {
       const invoice = await OwnerService.createRentInvoice(req.body);
       return sendSuccess(res, invoice, 'Rent invoice generated successfully', 201);
+    } catch (err: any) {
+      return sendError(res, err.message, 400);
+    }
+  }
+
+  public static async generateBulkInvoices(req: Request, res: Response) {
+    try {
+      const { branch_id, invoice_month, due_date } = req.body;
+      const result = await OwnerService.generateBulkInvoices(branch_id, invoice_month, due_date);
+      return sendSuccess(res, result, 'Bulk invoices generated successfully');
     } catch (err: any) {
       return sendError(res, err.message, 400);
     }
@@ -255,17 +183,28 @@ export class OwnerController {
     }
   }
 
-  public static async getRentPayments(req: Request, res: Response) {
+  public static async getPayments(req: Request, res: Response) {
     try {
       const { branch_id } = req.query;
-      const payments = await OwnerService.getRentPayments(branch_id as string);
-      return sendSuccess(res, payments, 'Rent payments list retrieved');
+      const payments = await OwnerService.getPayments(branch_id as string);
+      return sendSuccess(res, payments, 'Payments list retrieved');
     } catch (err: any) {
       return sendError(res, err.message, 500);
     }
   }
 
-  // Complaints
+  public static async verifyManualPayment(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      const { status, remarks } = req.body;
+      const payment = await OwnerService.verifyManualPayment(id, status, remarks);
+      return sendSuccess(res, payment, 'Payment verified successfully');
+    } catch (err: any) {
+      return sendError(res, err.message, 400);
+    }
+  }
+
+  // COMPLAINTS
   public static async getComplaints(req: Request, res: Response) {
     try {
       const { branch_id } = req.query;
@@ -279,15 +218,71 @@ export class OwnerController {
   public static async updateComplaintStatus(req: Request, res: Response) {
     try {
       const { id } = req.params;
-      const { status, resolution_note } = req.body;
-      const complaint = await OwnerService.updateComplaintStatus(id, status, resolution_note);
+      const { status } = req.body;
+      const resolvedBy = status === 'RESOLVED' ? req.user!.id : undefined;
+      const complaint = await OwnerService.updateComplaintStatus(id, status, resolvedBy);
       return sendSuccess(res, complaint, 'Complaint status updated');
     } catch (err: any) {
       return sendError(res, err.message, 400);
     }
   }
 
-  // Staff
+  // EXPENSES
+  public static async createExpense(req: Request, res: Response) {
+    try {
+      let receipt_url = req.body.receipt_url;
+      if (req.file) {
+        receipt_url = `/uploads/${req.file.filename}`;
+      }
+      const data = { ...req.body, receipt_url };
+      const expense = await OwnerService.createExpense(data);
+      return sendSuccess(res, expense, 'Expense recorded', 201);
+    } catch (err: any) {
+      return sendError(res, err.message, 400);
+    }
+  }
+
+  public static async getExpenses(req: Request, res: Response) {
+    try {
+      const { branch_id } = req.query;
+      const expenses = await OwnerService.getExpenses(branch_id as string);
+      return sendSuccess(res, expenses, 'Expenses list retrieved');
+    } catch (err: any) {
+      return sendError(res, err.message, 500);
+    }
+  }
+
+  // NOTICES
+  public static async createNotice(req: Request, res: Response) {
+    try {
+      const notice = await OwnerService.createNotice(req.body);
+      return sendSuccess(res, notice, 'Notice created', 201);
+    } catch (err: any) {
+      return sendError(res, err.message, 400);
+    }
+  }
+
+  public static async getNotices(req: Request, res: Response) {
+    try {
+      const { branch_id } = req.query;
+      const notices = await OwnerService.getNotices(branch_id as string);
+      return sendSuccess(res, notices, 'Notices list retrieved');
+    } catch (err: any) {
+      return sendError(res, err.message, 500);
+    }
+  }
+
+  public static async deleteNotice(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      await OwnerService.deleteNotice(id);
+      return sendSuccess(res, null, 'Notice deleted');
+    } catch (err: any) {
+      return sendError(res, err.message, 400);
+    }
+  }
+
+  // STAFF
   public static async createStaff(req: Request, res: Response) {
     try {
       const staff = await OwnerService.createStaff(req.body);
@@ -307,37 +302,7 @@ export class OwnerController {
     }
   }
 
-  // Expenses
-  public static async createExpenseCategory(req: Request, res: Response) {
-    try {
-      const { branch_id, category_name, description } = req.body;
-      const category = await OwnerService.createExpenseCategory(branch_id, category_name, description);
-      return sendSuccess(res, category, 'Expense category created', 201);
-    } catch (err: any) {
-      return sendError(res, err.message, 400);
-    }
-  }
-
-  public static async createExpense(req: Request, res: Response) {
-    try {
-      const expense = await OwnerService.createExpense(req.body);
-      return sendSuccess(res, expense, 'Expense recorded', 201);
-    } catch (err: any) {
-      return sendError(res, err.message, 400);
-    }
-  }
-
-  public static async getExpenses(req: Request, res: Response) {
-    try {
-      const { branch_id } = req.query;
-      const expenses = await OwnerService.getExpenses(branch_id as string);
-      return sendSuccess(res, expenses, 'Expenses list retrieved');
-    } catch (err: any) {
-      return sendError(res, err.message, 500);
-    }
-  }
-
-  // Reports
+  // REPORTS
   public static async getBranchReports(req: Request, res: Response) {
     try {
       const { branch_id } = req.query;

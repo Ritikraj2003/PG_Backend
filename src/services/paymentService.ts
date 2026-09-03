@@ -152,15 +152,22 @@ export class PaymentService {
         [data.booking_id, data.amount, data.payment_method, data.transaction_id, receiptNumber]
       );
 
-      // Confirm booking
+      // Confirm booking and create tenant
       await client.query(
-        'UPDATE bookings SET status = \'CONFIRMED\', updated_at = NOW() WHERE id = $1',
+        'UPDATE bookings SET status = \'PAID\', updated_at = NOW() WHERE id = $1',
         [data.booking_id]
       );
 
       if (booking.bed_id) {
-        await client.query('UPDATE beds SET status = \'RESERVED\', updated_at = NOW() WHERE id = $1', [booking.bed_id]);
+        await client.query('UPDATE beds SET status = \'OCCUPIED\', updated_at = NOW() WHERE id = $1', [booking.bed_id]);
       }
+      
+      // Auto-create tenant upon payment
+      await client.query(
+        `INSERT INTO tenants (user_id, branch_id, booking_id, tenant_code, status)
+         VALUES ($1, $2, $3, $4, 'ACTIVE') ON CONFLICT DO NOTHING`,
+        [booking.user_id, booking.branch_id, booking.id, `TNT-${Math.floor(1000 + Math.random() * 9000)}`]
+      );
 
       await client.query('COMMIT');
       return paymentRes.rows[0];

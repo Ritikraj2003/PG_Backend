@@ -7,7 +7,6 @@ import { verifyBranchOwnership } from '../middleware/branchAuth';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
-
 import os from 'os';
 
 const getUploadsDir = () => {
@@ -31,7 +30,7 @@ const storage = multer.diskStorage({
   filename: (_req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
     const ext = path.extname(file.originalname) || '.png';
-    cb(null, `room-${uniqueSuffix}${ext}`);
+    cb(null, `img-${uniqueSuffix}${ext}`);
   },
 });
 
@@ -42,49 +41,53 @@ const upload = multer({
 
 const router = Router();
 
-router.use(authenticate, authorizeRoles('OWNER', 'STAFF', 'SUPER_ADMIN'));
+router.use(authenticate, authorizeRoles('COMPANY_ADMIN', 'STAFF', 'SUPER_ADMIN'));
 
 router.get('/dashboard', OwnerController.getDashboard);
 router.get('/branches', OwnerController.getBranches);
 
-// Branch master routes with branch security verification
-router.post('/floors', verifyBranchOwnership, OwnerController.createFloor);
-router.get('/floors', OwnerController.getFloors);
-router.put('/floors/:id', OwnerController.updateFloor);
-router.delete('/floors/:id', OwnerController.deleteFloor);
+// Branch Settings
+router.get('/branch-settings', OwnerController.getBranchSettings);
+router.put('/branch-settings', upload.single('qr_image'), OwnerController.updateBranchSettings);
 
-router.post('/room-types', OwnerController.createRoomType);
-router.get('/room-types', OwnerController.getRoomTypes);
-
+// Rooms
 router.post('/rooms', upload.array('images', 10), verifyBranchOwnership, OwnerController.createRoom);
 router.get('/rooms', OwnerController.getRooms);
 
+// Beds
 router.post('/beds', verifyBranchOwnership, OwnerController.createBed);
 router.get('/beds', OwnerController.getBeds);
 router.put('/beds/:id', OwnerController.updateBed);
 router.delete('/beds/:id', OwnerController.deleteBed);
 
+// Tenants & Bookings
 router.get('/tenants', OwnerController.getTenants);
-
 router.get('/bookings', OwnerController.getBookings);
-router.put('/bookings/:id/status', OwnerController.updateBookingStatus);
+router.put('/bookings/:id/status', OwnerController.updateBookingStatus); // Handles check-out as well
 
-router.post('/check-ins', verifyBranchOwnership, OwnerController.processCheckIn);
-router.post('/check-outs', verifyBranchOwnership, OwnerController.processCheckOut);
-
+// Rent Invoices & Payments
 router.post('/rent/invoices', verifyBranchOwnership, OwnerController.createRentInvoice);
+router.post('/rent/invoices/generate-bulk', verifyBranchOwnership, OwnerController.generateBulkInvoices);
 router.get('/rent/invoices', OwnerController.getRentInvoices);
-router.get('/payments', OwnerController.getRentPayments);
+router.get('/payments', OwnerController.getPayments);
+router.put('/payments/:id/verify', OwnerController.verifyManualPayment);
 
+// Complaints
 router.get('/complaints', OwnerController.getComplaints);
 router.put('/complaints/:id/status', OwnerController.updateComplaintStatus);
 
+// Expenses
+router.post('/expenses', upload.single('receipt'), verifyBranchOwnership, OwnerController.createExpense);
+router.get('/expenses', OwnerController.getExpenses);
+
+// Notices
+router.post('/notices', verifyBranchOwnership, OwnerController.createNotice);
+router.get('/notices', OwnerController.getNotices);
+router.delete('/notices/:id', OwnerController.deleteNotice);
+
+// Staff Mapping
 router.post('/staff', verifyBranchOwnership, OwnerController.createStaff);
 router.get('/staff', OwnerController.getStaff);
-
-router.post('/expenses/categories', verifyBranchOwnership, OwnerController.createExpenseCategory);
-router.post('/expenses', verifyBranchOwnership, OwnerController.createExpense);
-router.get('/expenses', OwnerController.getExpenses);
 
 router.get('/reports', OwnerController.getBranchReports);
 

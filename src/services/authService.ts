@@ -36,14 +36,16 @@ export class AuthService {
       );
       const user = userRes.rows[0];
 
-      // Assign Role (default TENANT if not specified)
-      const roleName = data.role || 'TENANT';
+      // Assign Role (default USER if not specified)
+      const roleName = data.role || 'USER';
       const roleRes = await client.query('SELECT id FROM roles WHERE name = $1', [roleName]);
       if (roleRes.rows.length > 0) {
         await client.query(
           'INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)',
           [user.id, roleRes.rows[0].id]
         );
+      } else {
+        throw new Error(`Invalid role specified: ${roleName}`);
       }
 
       // Global registration completed (Tenant profile is created/copied to specific branch upon booking)

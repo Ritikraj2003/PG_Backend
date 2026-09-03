@@ -7,11 +7,13 @@ import tenantRoutes from './tenantRoutes';
 import paymentRoutes from './paymentRoutes';
 import notificationRoutes from './notificationRoutes';
 import cronRoutes from './cronRoutes';
+import uploadRoutes from './uploadRoutes';
 
 const router = Router();
 
 router.use('/auth', authRoutes);
 router.use('/public', publicRoutes);
+router.use('/upload', uploadRoutes);
 router.use('/admin', adminRoutes);
 router.use('/owner', ownerRoutes);
 router.use('/tenant', tenantRoutes);

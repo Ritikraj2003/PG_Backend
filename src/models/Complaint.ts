@@ -1,4 +1,4 @@
-import { ComplaintPriority, ComplaintStatus } from '../types';
+import { ComplaintStatus } from '../types';
 
 export interface IComplaint {
   id: string;
@@ -9,7 +9,6 @@ export interface IComplaint {
   category: string;
   title: string;
   description: string;
-  priority: ComplaintPriority;
   status: ComplaintStatus;
   assigned_to?: string;
   created_at: Date;

@@ -27,7 +27,7 @@ export const verifyBranchOwnership = async (req: Request, res: Response, next: N
 
     // 3. Find Property & 4. Verify Branch belongs to Property
     const result = await pool.query(
-      `SELECT b.id as branch_id, b.branch_name, p.id as property_id, p.owner_id
+      `SELECT b.id as branch_id, b.name as branch_name, p.id as property_id, p.owner_id
        FROM branches b
        JOIN properties p ON b.property_id = p.id
        WHERE b.id = $1 AND p.owner_id = $2`,

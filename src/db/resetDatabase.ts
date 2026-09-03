@@ -28,7 +28,7 @@ async function resetDatabase() {
     await client.query('BEGIN');
 
     // Insert Roles
-    const roles = ['SUPER_ADMIN', 'OWNER', 'STAFF', 'TENANT'];
+    const roles = ['SUPER_ADMIN', 'COMPANY_ADMIN', 'STAFF', 'USER'];
     for (const r of roles) {
       await client.query(
         `INSERT INTO roles (name, description) VALUES ($1, $2) ON CONFLICT (name) DO NOTHING`,
@@ -43,8 +43,8 @@ async function resetDatabase() {
 
     // Super Admin User
     const adminRes = await client.query(
-      `INSERT INTO users (full_name, email, mobile_number, password_hash, is_active, is_email_verified)
-       VALUES ('Super Admin', 'admin@pgmanagement.com', '9999999999', $1, TRUE, TRUE)
+      `INSERT INTO users (full_name, email, mobile_number, password_hash, is_active)
+       VALUES ('Super Admin', 'admin@pgmanagement.com', '9999999999', $1, TRUE)
        RETURNING id`,
       [adminPassHash]
     );
@@ -53,23 +53,6 @@ async function resetDatabase() {
       `INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)`,
       [adminId, superAdminRole]
     );
-
-    // Default Amenities
-    const amenities = [
-      { name: 'High-Speed WiFi', icon: 'wifi' },
-      { name: '3 Times Food / Meals', icon: 'utensils' },
-      { name: 'Daily Housekeeping', icon: 'broom' },
-      { name: 'Air Conditioning', icon: 'snowflake' },
-      { name: '24/7 Power Backup', icon: 'bolt' },
-      { name: 'Washing Machine / Laundry', icon: 'shirt' },
-      { name: 'CCTV & 24/7 Security', icon: 'shield-halved' },
-    ];
-    for (const a of amenities) {
-      await client.query(
-        `INSERT INTO amenities (name, icon) VALUES ($1, $2) ON CONFLICT (name) DO NOTHING`,
-        [a.name, a.icon]
-      );
-    }
 
     await client.query('COMMIT');
     console.log('🎉 Database wipe & Super Admin seeding completed successfully!');

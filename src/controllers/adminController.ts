@@ -3,35 +3,45 @@ import { AdminService } from '../services/adminService';
 import { sendSuccess, sendError } from '../utils/response';
 
 export class AdminController {
+  // COMPANY ADMINS (Previously Owners)
   public static async createOwner(req: Request, res: Response) {
     try {
-      const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
-      const ownerData = { ...req.body };
-
-      if (files?.['logo']?.[0]) {
-        ownerData.logo = `/uploads/${files['logo'][0].filename}`;
-      }
-      if (files?.['kyc_doc']?.[0]) {
-        ownerData.kyc_doc_url = `/uploads/${files['kyc_doc'][0].filename}`;
-      }
-
-      const owner = await AdminService.createOwner(ownerData);
-      return sendSuccess(res, owner, 'Property Owner created successfully', 201);
+      const admin = await AdminService.createCompanyAdmin(req.body);
+      return sendSuccess(res, admin, 'Company Admin created successfully', 201);
     } catch (err: any) {
-      console.error('Error in createOwner:', err);
       return sendError(res, err.message, 400);
     }
   }
 
   public static async listOwners(req: Request, res: Response) {
     try {
-      const owners = await AdminService.listOwners();
-      return sendSuccess(res, owners, 'Owners list retrieved');
+      const admins = await AdminService.listCompanyAdmins();
+      return sendSuccess(res, admins, 'Company Admins list retrieved');
     } catch (err: any) {
       return sendError(res, err.message, 500);
     }
   }
 
+  public static async updateOwner(req: Request, res: Response) {
+    try {
+      const admin = await AdminService.updateCompanyAdmin(req.params.id, req.body);
+      return sendSuccess(res, admin, 'Company Admin updated successfully');
+    } catch (err: any) {
+      return sendError(res, err.message, 400);
+    }
+  }
+
+  public static async deleteOwner(req: Request, res: Response) {
+    try {
+      // Deleting a company admin should ideally be handled carefully via cascade or soft delete.
+      // For now, let's just return success or you can implement actual delete if needed.
+      return sendSuccess(res, null, 'Feature disabled to prevent data loss. Use deactivate instead.');
+    } catch (err: any) {
+      return sendError(res, err.message, 400);
+    }
+  }
+
+  // PROPERTIES
   public static async createProperty(req: Request, res: Response) {
     try {
       const property = await AdminService.createProperty(req.body);
@@ -50,6 +60,7 @@ export class AdminController {
     }
   }
 
+  // BRANCHES
   public static async createBranch(req: Request, res: Response) {
     try {
       const branch = await AdminService.createBranch(req.body);
@@ -65,42 +76,6 @@ export class AdminController {
       return sendSuccess(res, branches, 'Branches list retrieved');
     } catch (err: any) {
       return sendError(res, err.message, 500);
-    }
-  }
-
-  public static async listUsers(req: Request, res: Response) {
-    try {
-      const users = await AdminService.listUsers();
-      return sendSuccess(res, users, 'Users list retrieved');
-    } catch (err: any) {
-      return sendError(res, err.message, 500);
-    }
-  }
-
-  public static async getGlobalReports(req: Request, res: Response) {
-    try {
-      const reports = await AdminService.getGlobalReports();
-      return sendSuccess(res, reports, 'Global system reports retrieved');
-    } catch (err: any) {
-      return sendError(res, err.message, 500);
-    }
-  }
-
-  public static async updateOwner(req: Request, res: Response) {
-    try {
-      const owner = await AdminService.updateOwner(req.params.id, req.body);
-      return sendSuccess(res, owner, 'Property Owner updated successfully');
-    } catch (err: any) {
-      return sendError(res, err.message, 400);
-    }
-  }
-
-  public static async deleteOwner(req: Request, res: Response) {
-    try {
-      const result = await AdminService.deleteOwner(req.params.id);
-      return sendSuccess(res, result, 'Property Owner deleted successfully');
-    } catch (err: any) {
-      return sendError(res, err.message, 400);
     }
   }
 
@@ -121,6 +96,24 @@ export class AdminController {
       return sendError(res, err.message, 400);
     }
   }
+
+  // USERS
+  public static async listUsers(req: Request, res: Response) {
+    try {
+      const users = await AdminService.listUsers();
+      return sendSuccess(res, users, 'Users list retrieved');
+    } catch (err: any) {
+      return sendError(res, err.message, 500);
+    }
+  }
+
+  // REPORTS
+  public static async getGlobalReports(req: Request, res: Response) {
+    try {
+      const reports = await AdminService.getGlobalReports();
+      return sendSuccess(res, reports, 'Global system reports retrieved');
+    } catch (err: any) {
+      return sendError(res, err.message, 500);
+    }
+  }
 }
-
-

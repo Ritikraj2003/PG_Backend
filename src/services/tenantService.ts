@@ -1,340 +1,92 @@
 import pool from '../db/database';
 
 export class TenantService {
-  public static async getTenantDashboard(userId: string) {
-    const tenantRes = await pool.query('SELECT * FROM tenants WHERE user_id = $1 ORDER BY created_at DESC', [userId]);
-    const tenant = tenantRes.rows[0] || null;
+  public static async getDashboardData(userId: string) {
+    const tRes = await pool.query('SELECT * FROM tenants WHERE user_id = $1 AND status = \'ACTIVE\'', [userId]);
+    if (tRes.rows.length === 0) return { activeTenant: null, summary: {} };
 
-    if (!tenant) {
-      return {
-        tenant: null,
-        registeredProperty: null,
-        currentStay: null,
-        pendingInvoices: [],
-        recentComplaints: [],
-        documents: [],
-        summary: {
-          pendingInvoicesAmount: 0,
-        },
-      };
-    }
+    const tenant = tRes.rows[0];
+    const branchRes = await pool.query('SELECT id, name, address, contact_number FROM branches WHERE id = $1', [tenant.branch_id]);
+    const roomRes = await pool.query('SELECT * FROM rooms WHERE id IN (SELECT room_id FROM bookings WHERE id = $1)', [tenant.booking_id]);
 
-    // Fetch registered property & branch details ONLY IF tenant has an active stay allocation or approved booking!
-    let registeredProperty = null;
-    if (tenant.branch_id) {
-      const activeStayOrApproved = await pool.query(
-        `SELECT id FROM bookings WHERE tenant_id = $1 AND status IN ('APPROVED', 'CONFIRMED', 'CHECKED_IN')
-         UNION
-         SELECT id FROM stay_allocations WHERE tenant_id = $1 AND is_active = TRUE`,
-        [tenant.id]
-      );
-      if (activeStayOrApproved.rows.length > 0) {
-        const propRes = await pool.query(
-          `SELECT b.id as branch_id, b.branch_name, b.address as branch_address, b.city as branch_city,
-                  p.id as property_id, p.property_name, p.property_type, p.description as property_description,
-                  po.business_name as owner_business_name, po.contact_number as owner_contact, po.email as owner_email
-           FROM branches b
-           JOIN properties p ON b.property_id = p.id
-           JOIN property_owners po ON p.owner_id = po.id
-           WHERE b.id = $1`,
-          [tenant.branch_id]
-        );
-        if (propRes.rows.length > 0) {
-          registeredProperty = propRes.rows[0];
-        }
-      }
-    }
-
-    // Get stay allocation / room
-    const stayRes = await pool.query(
-      `SELECT sa.*, r.room_number, r.monthly_rent, b.branch_name, b.address as branch_address, bd.bed_number
-       FROM stay_allocations sa
-       JOIN rooms r ON sa.room_id = r.id
-       JOIN branches b ON sa.branch_id = b.id
-       LEFT JOIN beds bd ON sa.bed_id = bd.id
-       WHERE sa.tenant_id = $1 AND sa.is_active = TRUE`,
-      [tenant.id]
-    );
-
-    // Pending invoices
-    const invoiceRes = await pool.query(
-      `SELECT * FROM rent_invoices WHERE tenant_id = $1 AND status IN ('PENDING', 'PARTIALLY_PAID', 'OVERDUE') ORDER BY due_date ASC`,
-      [tenant.id]
-    );
-
-    // Recent complaints
-    const complaintRes = await pool.query(
-      `SELECT * FROM complaints WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 5`,
-      [tenant.id]
-    );
-
-    // Tenant KYC Documents
-    const docRes = await pool.query(
-      `SELECT * FROM tenant_documents WHERE tenant_id = $1 ORDER BY created_at DESC`,
-      [tenant.id]
-    );
-
-    const pendingInvoicesAmount = invoiceRes.rows.reduce((acc: number, inv: any) => acc + Number(inv.balance_amount || 0), 0);
+    const invoices = await pool.query('SELECT * FROM rent_invoices WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 5', [tenant.id]);
+    const payments = await pool.query('SELECT * FROM payments WHERE user_id = $1 ORDER BY created_at DESC LIMIT 5', [userId]);
+    const notices = await pool.query('SELECT * FROM notices WHERE branch_id = $1 ORDER BY created_at DESC LIMIT 5', [tenant.branch_id]);
 
     return {
-      tenant,
-      registeredProperty,
-      currentStay: stayRes.rows[0] || null,
-      pendingInvoices: invoiceRes.rows,
-      recentComplaints: complaintRes.rows,
-      documents: docRes.rows,
-      summary: {
-        pendingInvoicesAmount,
-      },
+      activeTenant: tenant,
+      branch: branchRes.rows[0],
+      room: roomRes.rows[0],
+      recentInvoices: invoices.rows,
+      recentPayments: payments.rows,
+      notices: notices.rows
     };
   }
 
-  public static async createBooking(userId: string, data: {
-    branch_id: string;
-    room_id: string;
-    bed_id?: string;
-    expected_check_in_date: string;
-    expected_check_out_date?: string;
-    remarks?: string;
-    advance_payment_amount?: number;
-    payment_method?: string;
-    occupation?: string;
-    company_name?: string;
-    permanent_address?: string;
-    city?: string;
-    state?: string;
-    pincode?: string;
-    photo?: string;
-    emergency_name?: string;
-    emergency_phone?: string;
-    emergency_relation?: string;
-    document_type?: string;
-    document_number?: string;
-    document_url?: string;
-  }) {
-    const client = await pool.getClient();
-    try {
-      await client.query('BEGIN');
-
-      // 1. Get Global User info
-      const userRes = await client.query('SELECT * FROM users WHERE id = $1', [userId]);
-      if (userRes.rows.length === 0) throw new Error('User account not found');
-      const user = userRes.rows[0];
-
-      // 2. Copy Global User Data to Property Branch Tenant Profile upon booking
-      let tenantRes = await client.query('SELECT id FROM tenants WHERE user_id = $1 AND branch_id = $2', [userId, data.branch_id]);
-      let tenantId: string;
-
-      if (tenantRes.rows.length === 0) {
-        const tenantCode = `TNT-${Date.now().toString().slice(-6)}`;
-        const newTenant = await client.query(
-          `INSERT INTO tenants (user_id, branch_id, tenant_code, full_name, mobile_number, email, occupation, company_name, permanent_address, city, state, pincode, photo, status)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'ACTIVE') RETURNING id`,
-          [
-            userId,
-            data.branch_id,
-            tenantCode,
-            user.full_name,
-            user.mobile_number,
-            user.email,
-            data.occupation || null,
-            data.company_name || null,
-            data.permanent_address || null,
-            data.city || null,
-            data.state || null,
-            data.pincode || null,
-            data.photo || null,
-          ]
-        );
-        tenantId = newTenant.rows[0].id;
-      } else {
-        tenantId = tenantRes.rows[0].id;
-        await client.query(
-          `UPDATE tenants
-           SET occupation = COALESCE($1, occupation),
-               company_name = COALESCE($2, company_name),
-               permanent_address = COALESCE($3, permanent_address),
-               city = COALESCE($4, city),
-               state = COALESCE($5, state),
-               pincode = COALESCE($6, pincode),
-               photo = COALESCE($7, photo),
-               updated_at = CURRENT_TIMESTAMP
-           WHERE id = $8`,
-          [
-            data.occupation || null,
-            data.company_name || null,
-            data.permanent_address || null,
-            data.city || null,
-            data.state || null,
-            data.pincode || null,
-            data.photo || null,
-            tenantId,
-          ]
-        );
-      }
-
-      // 3. Add Emergency Contact if provided
-      if (data.emergency_name && data.emergency_phone) {
-        await client.query(
-          `INSERT INTO emergency_contacts (tenant_id, name, relation, phone)
-           VALUES ($1, $2, $3, $4)`,
-          [tenantId, data.emergency_name, data.emergency_relation || 'Parent/Guardian', data.emergency_phone]
-        );
-      }
-
-      // 4. Add Tenant Document if provided
-      if (data.document_url) {
-        await client.query(
-          `INSERT INTO tenant_documents (tenant_id, document_type, document_number, document_url)
-           VALUES ($1, $2, $3, $4)`,
-          [tenantId, data.document_type || 'ID_PROOF', data.document_number || 'N/A', data.document_url]
-        );
-      }
-
-      // 5. Verify Room & Bed Availability
-      const roomRes = await client.query('SELECT * FROM rooms WHERE id = $1 AND is_active = TRUE FOR UPDATE', [data.room_id]);
-      if (roomRes.rows.length === 0) throw new Error('Selected room is no longer available');
-      const room = roomRes.rows[0];
-
-      if (room.status === 'FULLY_OCCUPIED' || room.status === 'RESERVED' || room.status === 'MAINTENANCE') {
-        throw new Error('This room has already been reserved or occupied.');
-      }
-
-      // 6. Financial Calculation (Rent + Deposit + Electricity + Maintenance)
-      const monthlyRent = parseFloat(room.monthly_rent || 0);
-      const securityDeposit = parseFloat(room.security_deposit || 0);
-      const electricityCharge = parseFloat(room.electricity_charge || 0);
-      const maintenanceCharge = parseFloat(room.maintenance_charge || 0);
-      const calculatedTotal = monthlyRent + securityDeposit + electricityCharge + maintenanceCharge;
-      const finalBookingAmount = data.advance_payment_amount ? parseFloat(data.advance_payment_amount.toString()) : calculatedTotal;
-
-      const bookingNumber = `BK-${Date.now().toString().slice(-8)}`;
-      const remarksText = data.remarks || `Advance payment: ₹${finalBookingAmount} via ${data.payment_method || 'Online'}`;
-
-      // 7. Insert Booking
-      const bookingRes = await client.query(
-        `INSERT INTO bookings (branch_id, tenant_id, room_id, bed_id, booking_number, expected_check_in_date, expected_check_out_date, booking_amount, security_deposit, monthly_rent, status, remarks)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'PENDING', $11)
-         RETURNING *`,
-        [
-          data.branch_id,
-          tenantId,
-          data.room_id,
-          data.bed_id || null,
-          bookingNumber,
-          data.expected_check_in_date,
-          data.expected_check_out_date || null,
-          finalBookingAmount,
-          securityDeposit,
-          monthlyRent,
-          remarksText,
-        ]
-      );
-
-      // 8. Update Room Status to RESERVED
-      await client.query(
-        `UPDATE rooms SET status = 'RESERVED', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-        [data.room_id]
-      );
-
-      await client.query('COMMIT');
-
-      const resultBooking = bookingRes.rows[0];
-      resultBooking.financial_breakdown = {
-        monthly_rent: monthlyRent,
-        security_deposit: securityDeposit,
-        electricity_charge: electricityCharge,
-        maintenance_charge: maintenanceCharge,
-        total_advance: finalBookingAmount,
-        payment_method: data.payment_method || 'Online UPI/Card',
-      };
-
-      return resultBooking;
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
-    }
-  }
-
-  public static async getTenantBookings(userId: string) {
+  public static async createBooking(data: any) {
     const res = await pool.query(
-      `SELECT bk.*, b.branch_name, r.room_number, bd.bed_number
-       FROM bookings bk
-       JOIN tenants t ON bk.tenant_id = t.id
-       JOIN branches b ON bk.branch_id = b.id
-       JOIN rooms r ON bk.room_id = r.id
-       LEFT JOIN beds bd ON bk.bed_id = bd.id
-       WHERE t.user_id = $1 ORDER BY bk.created_at DESC`,
-      [userId]
+      `INSERT INTO bookings (branch_id, user_id, room_id, bed_id, status)
+       VALUES ($1, $2, $3, $4, 'PENDING') RETURNING *`,
+      [data.branch_id, data.user_id, data.room_id, data.bed_id || null]
     );
-    return res.rows;
-  }
-
-  public static async createComplaint(userId: string, data: {
-    category: string;
-    title: string;
-    description: string;
-    priority?: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
-  }) {
-    const tenantRes = await pool.query(
-      `SELECT t.id as tenant_id, sa.branch_id, sa.room_id
-       FROM tenants t
-       JOIN stay_allocations sa ON t.id = sa.tenant_id AND sa.is_active = TRUE
-       WHERE t.user_id = $1`,
-      [userId]
-    );
-
-    if (tenantRes.rows.length === 0) {
-      throw new Error('Active stay allocation required to raise complaints');
+    if (data.bed_id) {
+      await pool.query('UPDATE beds SET status = \'RESERVED\' WHERE id = $1', [data.bed_id]);
     }
-
-    const { tenant_id, branch_id, room_id } = tenantRes.rows[0];
-    const complaintNumber = `CMP-${Date.now().toString().slice(-6)}`;
-
-    const res = await pool.query(
-      `INSERT INTO complaints (branch_id, tenant_id, room_id, complaint_number, category, title, description, priority, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'OPEN') RETURNING *`,
-      [branch_id, tenant_id, room_id, complaintNumber, data.category, data.title, data.description, data.priority || 'MEDIUM']
-    );
-
     return res.rows[0];
   }
 
-  public static async getTenantComplaints(userId: string) {
+  public static async getBookings(userId: string) {
     const res = await pool.query(
-      `SELECT c.*, r.room_number
-       FROM complaints c
-       JOIN tenants t ON c.tenant_id = t.id
-       JOIN rooms r ON c.room_id = r.id
-       WHERE t.user_id = $1 ORDER BY c.created_at DESC`,
+      `SELECT b.*, r.room_number, r.room_type, r.monthly_rent, r.security_deposit, br.name as branch_name, bd.bed_number
+       FROM bookings b
+       JOIN rooms r ON b.room_id = r.id
+       JOIN branches br ON b.branch_id = br.id
+       LEFT JOIN beds bd ON b.bed_id = bd.id
+       WHERE b.user_id = $1 ORDER BY b.booking_date DESC`,
       [userId]
     );
     return res.rows;
   }
 
-  public static async getTenantInvoices(userId: string) {
+  public static async submitManualPayment(data: any) {
     const res = await pool.query(
-      `SELECT ri.*, b.branch_name
-       FROM rent_invoices ri
-       JOIN tenants t ON ri.tenant_id = t.id
-       JOIN branches b ON ri.branch_id = b.id
-       WHERE t.user_id = $1 ORDER BY ri.due_date DESC`,
-      [userId]
+      `INSERT INTO payments (branch_id, user_id, booking_id, invoice_id, amount, payment_method, status, screenshot_url, reference_number)
+       VALUES ($1, $2, $3, $4, $5, 'MANUAL_QR', 'PENDING_VERIFICATION', $6, $7) RETURNING *`,
+      [data.branch_id, data.user_id, data.booking_id || null, data.invoice_id || null, data.amount, data.screenshot_url, data.reference_number || null]
     );
+    return res.rows[0];
+  }
+
+  public static async getBranchSettings(branchId: string) {
+    const res = await pool.query('SELECT upi_id, upi_qr_url, razorpay_key FROM branch_settings WHERE branch_id = $1', [branchId]);
+    return res.rows[0];
+  }
+
+  public static async createComplaint(data: any) {
+    const res = await pool.query(
+      `INSERT INTO complaints (branch_id, user_id, tenant_id, room_id, title, description, status)
+       VALUES ($1, $2, $3, $4, $5, $6, 'OPEN') RETURNING *`,
+      [data.branch_id, data.user_id, data.tenant_id, data.room_id, data.title, data.description]
+    );
+    return res.rows[0];
+  }
+
+  public static async getComplaints(userId: string) {
+    const res = await pool.query('SELECT * FROM complaints WHERE user_id = $1 ORDER BY created_at DESC', [userId]);
     return res.rows;
   }
 
-  public static async getTenantPayments(userId: string) {
-    const res = await pool.query(
-      `SELECT rp.*, ri.invoice_number
-       FROM rent_payments rp
-       JOIN tenants t ON rp.tenant_id = t.id
-       JOIN rent_invoices ri ON rp.rent_invoice_id = ri.id
-       WHERE t.user_id = $1 ORDER BY rp.created_at DESC`,
-      [userId]
-    );
+  public static async getInvoices(userId: string) {
+    const tRes = await pool.query('SELECT id FROM tenants WHERE user_id = $1', [userId]);
+    if (tRes.rows.length === 0) return [];
+    
+    const tenantIds = tRes.rows.map(t => t.id);
+    const res = await pool.query('SELECT * FROM rent_invoices WHERE tenant_id = ANY($1) ORDER BY created_at DESC', [tenantIds]);
+    return res.rows;
+  }
+
+  public static async getPayments(userId: string) {
+    const res = await pool.query('SELECT * FROM payments WHERE user_id = $1 ORDER BY created_at DESC', [userId]);
     return res.rows;
   }
 }
