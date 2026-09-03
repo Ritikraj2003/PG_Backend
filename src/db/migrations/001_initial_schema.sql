@@ -148,6 +148,16 @@ CREATE TABLE IF NOT EXISTS tenants (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS booking_deductions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    branch_id UUID REFERENCES branches(id) ON DELETE CASCADE,
+    booking_id UUID REFERENCES bookings(id) ON DELETE CASCADE,
+    deduction_type VARCHAR(50) NOT NULL, -- DAMAGE, UNPAID_RENT, CLEANING, OTHER
+    amount NUMERIC(12, 2) NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 -- ==================================================
 -- 6. BILLING & PAYMENTS
 -- ==================================================
