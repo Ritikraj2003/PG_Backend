@@ -1,4 +1,4 @@
-import pool from '../db/database';
+import pool, { queryNamed } from '../db/database';
 import { hashPassword, comparePassword } from '../utils/password';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '../utils/jwt';
 import { RoleType } from '../types';
@@ -17,9 +17,10 @@ export class AuthService {
       await client.query('BEGIN');
 
       // Check existing user
-      const existing = await client.query(
-        'SELECT id FROM users WHERE email = $1 OR mobile_number = $2',
-        [data.email, data.mobile_number]
+      const existing = await queryNamed(
+        'SELECT id FROM users WHERE email = @email OR mobile_number = @mobile',
+        { email: data.email, mobile: data.mobile_number },
+        client
       );
       if (existing.rows.length > 0) {
         throw new Error('User with this email or mobile number already exists');
@@ -28,27 +29,27 @@ export class AuthService {
       const password_hash = await hashPassword(data.password);
 
       // Insert User
-      const userRes = await client.query(
+      const userRes = await queryNamed(
         `INSERT INTO users (full_name, email, mobile_number, password_hash)
-         VALUES ($1, $2, $3, $4)
+         VALUES (@name, @email, @mobile, @hash)
          RETURNING id, full_name, email, mobile_number, is_active`,
-        [data.full_name, data.email, data.mobile_number, password_hash]
+        { name: data.full_name, email: data.email, mobile: data.mobile_number, hash: password_hash },
+        client
       );
       const user = userRes.rows[0];
 
       // Assign Role (default USER if not specified)
       const roleName = data.role || 'USER';
-      const roleRes = await client.query('SELECT id FROM roles WHERE name = $1', [roleName]);
+      const roleRes = await queryNamed('SELECT id FROM roles WHERE name = @roleName', { roleName }, client);
       if (roleRes.rows.length > 0) {
-        await client.query(
-          'INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)',
-          [user.id, roleRes.rows[0].id]
+        await queryNamed(
+          'INSERT INTO user_roles (user_id, role_id) VALUES (@userId, @roleId)',
+          { userId: user.id, roleId: roleRes.rows[0].id },
+          client
         );
       } else {
         throw new Error(`Invalid role specified: ${roleName}`);
       }
-
-      // Global registration completed (Tenant profile is created/copied to specific branch upon booking)
 
       await client.query('COMMIT');
 
@@ -58,10 +59,10 @@ export class AuthService {
       const refreshToken = generateRefreshToken(payload);
 
       // Store refresh token
-      await pool.query(
+      await queryNamed(
         `INSERT INTO refresh_tokens (user_id, token, expires_at)
-         VALUES ($1, $2, NOW() + INTERVAL '7 days')`,
-        [user.id, refreshToken]
+         VALUES (@userId, @token, NOW() + INTERVAL '7 days')`,
+        { userId: user.id, token: refreshToken }
       );
 
       return {
@@ -84,15 +85,15 @@ export class AuthService {
   }
 
   public static async login(emailOrMobile: string, password: string) {
-    const userRes = await pool.query(
+    const userRes = await queryNamed(
       `SELECT u.id, u.full_name, u.email, u.mobile_number, u.password_hash, u.is_active,
               ARRAY_AGG(r.name) as roles
        FROM users u
        JOIN user_roles ur ON u.id = ur.user_id
        JOIN roles r ON ur.role_id = r.id
-       WHERE u.email = $1 OR u.mobile_number = $1
+       WHERE u.email = @identifier OR u.mobile_number = @identifier
        GROUP BY u.id`,
-      [emailOrMobile]
+      { identifier: emailOrMobile }
     );
 
     if (userRes.rows.length === 0) {
@@ -113,10 +114,10 @@ export class AuthService {
     const accessToken = generateAccessToken(payload);
     const refreshToken = generateRefreshToken(payload);
 
-    await pool.query(
+    await queryNamed(
       `INSERT INTO refresh_tokens (user_id, token, expires_at)
-       VALUES ($1, $2, NOW() + INTERVAL '7 days')`,
-      [user.id, refreshToken]
+       VALUES (@userId, @token, NOW() + INTERVAL '7 days')`,
+      { userId: user.id, token: refreshToken }
     );
 
     return {
@@ -134,23 +135,23 @@ export class AuthService {
 
   public static async refresh(token: string) {
     const decoded = verifyRefreshToken(token);
-    const stored = await pool.query(
-      'SELECT user_id FROM refresh_tokens WHERE token = $1 AND expires_at > NOW()',
-      [token]
+    const stored = await queryNamed(
+      'SELECT user_id FROM refresh_tokens WHERE token = @token AND expires_at > NOW()',
+      { token }
     );
 
     if (stored.rows.length === 0) {
       throw new Error('Invalid or expired refresh token');
     }
 
-    const userRes = await pool.query(
+    const userRes = await queryNamed(
       `SELECT u.id, u.email, ARRAY_AGG(r.name) as roles
        FROM users u
        JOIN user_roles ur ON u.id = ur.user_id
        JOIN roles r ON ur.role_id = r.id
-       WHERE u.id = $1 AND u.is_active = TRUE
+       WHERE u.id = @userId AND u.is_active = TRUE
        GROUP BY u.id`,
-      [decoded.userId]
+      { userId: decoded.userId }
     );
 
     if (userRes.rows.length === 0) {
@@ -163,32 +164,32 @@ export class AuthService {
     const newRefreshToken = generateRefreshToken(payload);
 
     // Rotate refresh token
-    await pool.query('DELETE FROM refresh_tokens WHERE token = $1', [token]);
-    await pool.query(
+    await queryNamed('DELETE FROM refresh_tokens WHERE token = @token', { token });
+    await queryNamed(
       `INSERT INTO refresh_tokens (user_id, token, expires_at)
-       VALUES ($1, $2, NOW() + INTERVAL '7 days')`,
-      [user.id, newRefreshToken]
+       VALUES (@userId, @token, NOW() + INTERVAL '7 days')`,
+      { userId: user.id, token: newRefreshToken }
     );
 
     return { accessToken: newAccessToken, refreshToken: newRefreshToken };
   }
 
   public static async logout(token: string) {
-    await pool.query('DELETE FROM refresh_tokens WHERE token = $1', [token]);
+    await queryNamed('DELETE FROM refresh_tokens WHERE token = @token', { token });
   }
 
   public static async changePassword(userId: string, oldPass: string, newPass: string) {
-    const userRes = await pool.query('SELECT password_hash FROM users WHERE id = $1', [userId]);
+    const userRes = await queryNamed('SELECT password_hash FROM users WHERE id = @userId', { userId });
     if (userRes.rows.length === 0) throw new Error('User not found');
 
     const match = await comparePassword(oldPass, userRes.rows[0].password_hash);
     if (!match) throw new Error('Incorrect current password');
 
     const newHash = await hashPassword(newPass);
-    await pool.query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [newHash, userId]);
+    await queryNamed('UPDATE users SET password_hash = @newHash, updated_at = NOW() WHERE id = @userId', { newHash, userId });
   }
 
   public static async toggleUserStatus(userId: string, is_active: boolean) {
-    await pool.query('UPDATE users SET is_active = $1, updated_at = NOW() WHERE id = $2', [is_active, userId]);
+    await queryNamed('UPDATE users SET is_active = @isActive, updated_at = NOW() WHERE id = @userId', { isActive: is_active, userId });
   }
 }

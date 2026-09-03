@@ -18,6 +18,8 @@ const server = app.listen(PORT, async () => {
   try {
     const dbTest = await pool.query('SELECT NOW()');
     console.log(`✅ Database Connected Successfully at ${dbTest.rows[0].now}`);
+    await pool.query('ALTER TABLE beds ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;');
+    await pool.query('ALTER TABLE rooms ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;');
   } catch (err) {
     console.warn(`⚠️ Warning: Database connection failed. Please verify DATABASE_URL in .env:`, err);
   }

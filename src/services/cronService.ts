@@ -1,23 +1,24 @@
-import pool from '../db/database';
+import pool, { queryNamed } from '../db/database';
 import { NotificationService } from './notificationService';
 
 export class CronService {
   public static async runRentReminders() {
     console.log('[CRON] Running rent reminders...');
-    const res = await pool.query(
+    const res = await queryNamed(
       `SELECT ri.*, t.user_id, u.full_name
        FROM rent_invoices ri
        JOIN tenants t ON ri.tenant_id = t.id
        JOIN users u ON t.user_id = u.id
        WHERE ri.status = 'PENDING'
-         AND ri.due_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '3 days'`
+         AND ri.due_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '3 days'`,
+      {}
     );
 
     let count = 0;
     for (const inv of res.rows) {
-      const existing = await pool.query(
-        `SELECT id FROM notifications WHERE user_id = $1 AND title LIKE 'Rent Reminder%' AND created_at >= CURRENT_DATE`,
-        [inv.user_id]
+      const existing = await queryNamed(
+        `SELECT id FROM notifications WHERE user_id = @userId AND title LIKE 'Rent Reminder%' AND created_at >= CURRENT_DATE`,
+        { userId: inv.user_id }
       );
 
       if (existing.rows.length === 0) {
@@ -46,12 +47,17 @@ export class CronService {
       );
 
       for (const inv of res.rows) {
-        const tRes = await client.query('SELECT t.user_id, u.full_name FROM tenants t JOIN users u ON t.user_id = u.id WHERE t.id = $1', [inv.tenant_id]);
+        const tRes = await queryNamed(
+          'SELECT t.user_id, u.full_name FROM tenants t JOIN users u ON t.user_id = u.id WHERE t.id = @tenantId',
+          { tenantId: inv.tenant_id },
+          client
+        );
         if (tRes.rows.length > 0) {
           const tenant = tRes.rows[0];
-          const existing = await client.query(
-            `SELECT id FROM notifications WHERE user_id = $1 AND title LIKE 'Overdue Rent Notice%' AND created_at >= CURRENT_DATE`,
-            [tenant.user_id]
+          const existing = await queryNamed(
+            `SELECT id FROM notifications WHERE user_id = @userId AND title LIKE 'Overdue Rent Notice%' AND created_at >= CURRENT_DATE`,
+            { userId: tenant.user_id },
+            client
           );
 
           if (existing.rows.length === 0) {
