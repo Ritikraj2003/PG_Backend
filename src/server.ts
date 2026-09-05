@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import app from './app';
 import { config } from './config/env';
 import pool from './db/database';
@@ -57,6 +59,12 @@ const server = app.listen(PORT, async () => {
       ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS transaction_id VARCHAR(150);
       ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS payment_status VARCHAR(50) DEFAULT 'PAID';
     `);
+
+    const migration004 = path.join(__dirname, 'db', 'migrations', '004_roles_and_permissions.sql');
+    if (fs.existsSync(migration004)) {
+      const sql004 = fs.readFileSync(migration004, 'utf8');
+      await pool.query(sql004);
+    }
   } catch (err) {
     console.warn(`⚠️ Warning: Database connection failed. Please verify DATABASE_URL in .env:`, err);
   }

@@ -86,8 +86,8 @@ export class AuthService {
 
   public static async login(emailOrMobile: string, password: string) {
     const userRes = await queryNamed(
-      `SELECT u.id, u.full_name, u.email, u.mobile_number, u.password_hash, u.is_active,
-              ARRAY_AGG(r.name) as roles
+      `SELECT u.id, u.full_name, u.email, u.mobile_number, u.password_hash, u.is_active, u.owner_id,
+              ARRAY_AGG(DISTINCT r.name) as roles
        FROM users u
        JOIN user_roles ur ON u.id = ur.user_id
        JOIN roles r ON ur.role_id = r.id
@@ -120,8 +120,40 @@ export class AuthService {
       { userId: user.id, token: refreshToken }
     );
 
+    const isOwner = user.roles.includes('COMPANY_ADMIN');
+    const isSuperAdmin = user.roles.includes('SUPER_ADMIN');
+
+    // Permissions resolution
+    let permissions: string[] = [];
+    if (isSuperAdmin || isOwner) {
+      const allPerms = await pool.query('SELECT permission_code FROM permissions ORDER BY id ASC');
+      permissions = allPerms.rows.map((p: any) => p.permission_code);
+    } else {
+      const staffPerms = await pool.query(
+        `SELECT DISTINCT p.permission_code
+         FROM role_permission_mapping rpm
+         JOIN permissions p ON p.id = rpm.permission_id
+         JOIN user_roles ur ON ur.role_id = rpm.role_id
+         WHERE ur.user_id = $1`,
+        [user.id]
+      );
+      permissions = staffPerms.rows.map((p: any) => p.permission_code);
+    }
+
+    // Branch resolution
+    let branchId: string | undefined;
+    const ubRes = await pool.query('SELECT branch_id FROM user_branches WHERE user_id = $1 LIMIT 1', [user.id]);
+    if (ubRes.rows.length > 0) {
+      branchId = ubRes.rows[0].branch_id;
+    } else {
+      const tRes = await pool.query('SELECT branch_id FROM tenants WHERE user_id = $1 LIMIT 1', [user.id]);
+      if (tRes.rows.length > 0) {
+        branchId = tRes.rows[0].branch_id;
+      }
+    }
+
     let subscription: any = null;
-    if (user.roles.includes('COMPANY_ADMIN')) {
+    if (isOwner) {
       const subRes = await queryNamed(
         `SELECT id, plan_name, duration_months, start_date, end_date, status,
                 CASE WHEN end_date < CURRENT_TIMESTAMP THEN TRUE ELSE FALSE END as is_expired,
@@ -149,6 +181,10 @@ export class AuthService {
         mobile_number: user.mobile_number,
         roles: user.roles,
         subscription,
+        permissions,
+        owner_id: isOwner ? user.id : (user.owner_id || undefined),
+        is_owner: isOwner,
+        branch_id: branchId,
       },
       accessToken,
       refreshToken,

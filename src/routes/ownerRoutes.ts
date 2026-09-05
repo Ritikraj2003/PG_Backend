@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { OwnerController } from '../controllers/ownerController';
+import { RbacController } from '../controllers/rbacController';
 import { authenticate } from '../middleware/auth';
 import { authorizeRoles } from '../middleware/role';
 import { verifyBranchOwnership } from '../middleware/branchAuth';
@@ -91,7 +92,20 @@ router.post('/notices', verifyBranchOwnership, OwnerController.createNotice);
 router.get('/notices', OwnerController.getNotices);
 router.delete('/notices/:id', OwnerController.deleteNotice);
 
-// Staff Mapping
+// Roles & Permissions (RBAC)
+router.get('/permissions', RbacController.getPermissions);
+router.get('/roles', RbacController.getRoles);
+router.post('/roles', RbacController.createRole);
+router.put('/roles/:id', RbacController.updateRole);
+router.delete('/roles/:id', RbacController.deleteRole);
+
+// Staff / Team Management (RBAC)
+router.get('/team', RbacController.getStaff);
+router.post('/team', RbacController.createStaff);
+router.put('/team/:id', RbacController.updateStaff);
+router.delete('/team/:id', RbacController.deleteStaff);
+
+// Staff Legacy Mapping
 router.post('/staff', verifyBranchOwnership, OwnerController.createStaff);
 router.get('/staff', OwnerController.getStaff);
 

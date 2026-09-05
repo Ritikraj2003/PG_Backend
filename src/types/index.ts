@@ -1,4 +1,4 @@
-export type RoleType = 'SUPER_ADMIN' | 'COMPANY_ADMIN' | 'STAFF' | 'USER';
+export type RoleType = 'SUPER_ADMIN' | 'COMPANY_ADMIN' | 'STAFF' | 'USER' | string;
 
 export type PropertyType = 'PG' | 'RENTAL_HOUSE';
 
@@ -33,4 +33,7 @@ export interface AuthenticatedUser {
   ownerId?: string;
   tenantId?: string;
   branchId?: string;
+  permissions?: string[];
+  isOwner?: boolean;
 }
+

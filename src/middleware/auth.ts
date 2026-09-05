@@ -24,8 +24,8 @@ export const authenticate = async (req: Request, res: Response, next: NextFuncti
 
     // Fetch user details & roles from DB
     const userRes = await pool.query(
-      `SELECT u.id, u.full_name, u.email, u.mobile_number, u.is_active,
-              ARRAY_AGG(r.name) as roles
+      `SELECT u.id, u.full_name, u.email, u.mobile_number, u.is_active, u.owner_id,
+              ARRAY_AGG(DISTINCT r.name) as roles
        FROM users u
        JOIN user_roles ur ON u.id = ur.user_id
        JOIN roles r ON ur.role_id = r.id
@@ -39,6 +39,8 @@ export const authenticate = async (req: Request, res: Response, next: NextFuncti
     }
 
     const row = userRes.rows[0];
+    const isOwner = row.roles.includes('COMPANY_ADMIN');
+    const isSuperAdmin = row.roles.includes('SUPER_ADMIN');
 
     // Find optional tenant id & branch id
     let tenantId: string | undefined;
@@ -47,6 +49,28 @@ export const authenticate = async (req: Request, res: Response, next: NextFuncti
     if (tenantRes.rows.length > 0) {
       tenantId = tenantRes.rows[0].id;
       branchId = tenantRes.rows[0].branch_id;
+    } else {
+      const ubRes = await pool.query('SELECT branch_id FROM user_branches WHERE user_id = $1 LIMIT 1', [row.id]);
+      if (ubRes.rows.length > 0) {
+        branchId = ubRes.rows[0].branch_id;
+      }
+    }
+
+    // Resolve permissions
+    let permissions: string[] = [];
+    if (isSuperAdmin || isOwner) {
+      const allPerms = await pool.query('SELECT permission_code FROM permissions ORDER BY id ASC');
+      permissions = allPerms.rows.map((p: any) => p.permission_code);
+    } else {
+      const staffPerms = await pool.query(
+        `SELECT DISTINCT p.permission_code
+         FROM role_permission_mapping rpm
+         JOIN permissions p ON p.id = rpm.permission_id
+         JOIN user_roles ur ON ur.role_id = rpm.role_id
+         WHERE ur.user_id = $1`,
+        [row.id]
+      );
+      permissions = staffPerms.rows.map((p: any) => p.permission_code);
     }
 
     req.user = {
@@ -55,9 +79,11 @@ export const authenticate = async (req: Request, res: Response, next: NextFuncti
       fullName: row.full_name,
       mobileNumber: row.mobile_number,
       roles: row.roles,
-      ownerId: row.roles.includes('COMPANY_ADMIN') ? row.id : undefined,
+      ownerId: isOwner ? row.id : (row.owner_id || undefined),
       tenantId,
       branchId,
+      permissions,
+      isOwner,
     };
 
     next();
