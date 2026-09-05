@@ -1,8 +1,81 @@
 import { Request, Response } from 'express';
 import { OwnerService } from '../services/ownerService';
+import { PaymentService } from '../services/paymentService';
 import { sendSuccess, sendError } from '../utils/response';
 
 export class OwnerController {
+  // PLATFORM PAYMENT INFO (SuperAdmin Credentials)
+  public static async getPlatformPaymentInfo(req: Request, res: Response) {
+    try {
+      const info = await OwnerService.getPlatformPaymentInfo();
+      return sendSuccess(res, info, 'Platform payment info retrieved');
+    } catch (err: any) {
+      return sendError(res, err.message, 500);
+    }
+  }
+
+  // CREATE RAZORPAY SUBSCRIPTION ORDER (Routes to SuperAdmin account)
+  public static async createSubscriptionOrder(req: Request, res: Response) {
+    try {
+      const { amount, plan_id, branch_id } = req.body;
+      if (!amount || parseFloat(amount) <= 0) {
+        return sendError(res, 'Valid amount is required', 400);
+      }
+
+      // Crucial: No branchId passed to getRazorpayClient, so PaymentService picks SuperAdmin keys (branch_id IS NULL)!
+      const order = await PaymentService.createRazorpayOrder(
+        parseFloat(amount),
+        'INR',
+        `sub_${Date.now().toString().slice(-8)}`
+      );
+      return sendSuccess(res, order, 'Subscription payment order created');
+    } catch (err: any) {
+      return sendError(res, err.message, 500);
+    }
+  }
+
+  // VERIFY RAZORPAY SUBSCRIPTION PAYMENT & RENEW
+  public static async verifySubscriptionPayment(req: Request, res: Response) {
+    try {
+      const ownerId = req.user!.id;
+      const {
+        razorpay_order_id,
+        razorpay_payment_id,
+        razorpay_signature,
+        branch_id,
+        plan_id,
+        duration_months,
+      } = req.body;
+
+      if (!branch_id || !plan_id) {
+        return sendError(res, 'branch_id and plan_id are required', 400);
+      }
+
+      // Verify signature against SuperAdmin Razorpay Secret (branchId undefined)
+      const isValid = await PaymentService.verifySignature(
+        razorpay_order_id,
+        razorpay_payment_id,
+        razorpay_signature
+      );
+      if (!isValid) {
+        return sendError(res, 'Invalid Razorpay payment signature', 400);
+      }
+
+      const subscription = await OwnerService.renewSubscription(ownerId, {
+        branch_id,
+        plan_id,
+        duration_months,
+        payment_method: 'RAZORPAY',
+        transaction_id: razorpay_payment_id,
+        payment_status: 'PAID',
+      });
+
+      return sendSuccess(res, subscription, 'Subscription payment verified and branch renewed successfully');
+    } catch (err: any) {
+      return sendError(res, err.message, 400);
+    }
+  }
+
   // DASHBOARD
   public static async getDashboard(req: Request, res: Response) {
     try {
@@ -12,6 +85,20 @@ export class OwnerController {
       return sendSuccess(res, dashboard, 'Owner dashboard retrieved');
     } catch (err: any) {
       return sendError(res, err.message, 500);
+    }
+  }
+
+  public static async renewSubscription(req: Request, res: Response) {
+    try {
+      const ownerId = req.user!.id;
+      const data = {
+        ...req.body,
+        branch_id: req.params.id || req.body.branch_id,
+      };
+      const subscription = await OwnerService.renewSubscription(ownerId, data);
+      return sendSuccess(res, subscription, 'Subscription renewed successfully');
+    } catch (err: any) {
+      return sendError(res, err.message, 400);
     }
   }
 

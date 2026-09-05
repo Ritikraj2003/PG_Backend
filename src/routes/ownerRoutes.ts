@@ -44,6 +44,11 @@ const router = Router();
 router.use(authenticate, authorizeRoles('COMPANY_ADMIN', 'STAFF', 'SUPER_ADMIN'));
 
 router.get('/dashboard', OwnerController.getDashboard);
+router.get('/platform-payment-info', OwnerController.getPlatformPaymentInfo);
+router.post('/subscription/create-order', OwnerController.createSubscriptionOrder);
+router.post('/subscription/verify-and-renew', OwnerController.verifySubscriptionPayment);
+router.post('/subscription/renew', OwnerController.renewSubscription);
+router.post('/branches/:id/renew-subscription', OwnerController.renewSubscription);
 router.get('/branches', OwnerController.getBranches);
 
 // Branch Settings
@@ -71,6 +76,7 @@ router.post('/rent/invoices/generate-bulk', verifyBranchOwnership, OwnerControll
 router.get('/rent/invoices', OwnerController.getRentInvoices);
 router.get('/payments', OwnerController.getPayments);
 router.put('/payments/:id/verify', OwnerController.verifyManualPayment);
+router.post('/payments/:id/verify', OwnerController.verifyManualPayment);
 
 // Complaints
 router.get('/complaints', OwnerController.getComplaints);

@@ -120,6 +120,27 @@ export class AuthService {
       { userId: user.id, token: refreshToken }
     );
 
+    let subscription: any = null;
+    if (user.roles.includes('COMPANY_ADMIN')) {
+      const subRes = await queryNamed(
+        `SELECT id, plan_name, duration_months, start_date, end_date, status,
+                CASE WHEN end_date < CURRENT_TIMESTAMP THEN TRUE ELSE FALSE END as is_expired,
+                GREATEST(0, EXTRACT(DAY FROM end_date - CURRENT_TIMESTAMP)::INT) as days_remaining
+         FROM subscriptions
+         WHERE owner_id = @userId
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        { userId: user.id }
+      );
+      if (subRes.rows.length > 0) {
+        const sub = subRes.rows[0];
+        subscription = {
+          ...sub,
+          status: sub.is_expired ? 'EXPIRED' : sub.status,
+        };
+      }
+    }
+
     return {
       user: {
         id: user.id,
@@ -127,6 +148,7 @@ export class AuthService {
         email: user.email,
         mobile_number: user.mobile_number,
         roles: user.roles,
+        subscription,
       },
       accessToken,
       refreshToken,

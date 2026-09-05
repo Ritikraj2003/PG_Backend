@@ -20,6 +20,43 @@ const server = app.listen(PORT, async () => {
     console.log(`✅ Database Connected Successfully at ${dbTest.rows[0].now}`);
     await pool.query('ALTER TABLE beds ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;');
     await pool.query('ALTER TABLE rooms ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS subscription_plans (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        name VARCHAR(150) NOT NULL,
+        description TEXT,
+        duration_months INT NOT NULL DEFAULT 1,
+        price NUMERIC(10, 2) NOT NULL DEFAULT 0,
+        max_branches INT NOT NULL DEFAULT 1,
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS subscriptions (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        plan_id UUID REFERENCES subscription_plans(id) ON DELETE SET NULL,
+        branch_id UUID REFERENCES branches(id) ON DELETE CASCADE,
+        owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        property_id UUID REFERENCES properties(id) ON DELETE SET NULL,
+        plan_name VARCHAR(100) NOT NULL,
+        duration_months INT NOT NULL,
+        max_branches INT DEFAULT 1,
+        start_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        end_date TIMESTAMP WITH TIME ZONE NOT NULL,
+        status VARCHAR(20) DEFAULT 'ACTIVE',
+        price NUMERIC(10, 2) DEFAULT 0,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+      ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS plan_id UUID REFERENCES subscription_plans(id) ON DELETE SET NULL;
+      ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS branch_id UUID REFERENCES branches(id) ON DELETE CASCADE;
+      ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS max_branches INT DEFAULT 1;
+      ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50) DEFAULT 'CASH';
+      ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS transaction_id VARCHAR(150);
+      ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS payment_status VARCHAR(50) DEFAULT 'PAID';
+    `);
   } catch (err) {
     console.warn(`⚠️ Warning: Database connection failed. Please verify DATABASE_URL in .env:`, err);
   }

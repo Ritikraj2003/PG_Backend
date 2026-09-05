@@ -3,6 +3,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { AdminController } from '../controllers/adminController';
+import { PlanController } from '../controllers/planController';
 import { authenticate } from '../middleware/auth';
 import { authorizeRoles } from '../middleware/role';
 
@@ -47,6 +48,7 @@ router.post(
 );
 router.get('/owners', AdminController.listOwners);
 router.put('/owners/:id', AdminController.updateOwner);
+router.post('/owners/:id/renew-subscription', AdminController.renewOwnerSubscription);
 router.delete('/owners/:id', AdminController.deleteOwner);
 
 router.post('/properties', AdminController.createProperty);
@@ -56,8 +58,21 @@ router.post('/branches', AdminController.createBranch);
 router.get('/branches', AdminController.listBranches);
 router.put('/branches/:id', AdminController.updateBranch);
 router.delete('/branches/:id', AdminController.deleteBranch);
+router.post('/branches/:id/renew-subscription', AdminController.renewBranchSubscription);
+
+// Subscription Plans CRUD
+router.get('/plans', PlanController.listPlans);
+router.get('/plans/:id', PlanController.getPlan);
+router.post('/plans', PlanController.createPlan);
+router.put('/plans/:id', PlanController.updatePlan);
+router.delete('/plans/:id', PlanController.deletePlan);
 
 router.get('/users', AdminController.listUsers);
 router.get('/reports', AdminController.getGlobalReports);
+
+// General Settings (SuperAdmin Platform Credentials)
+router.get('/general-settings', AdminController.getGeneralSettings);
+router.put('/general-settings', upload.single('upi_qr'), AdminController.updateGeneralSettings);
+router.post('/general-settings', upload.single('upi_qr'), AdminController.updateGeneralSettings);
 
 export default router;

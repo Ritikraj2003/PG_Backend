@@ -34,12 +34,21 @@ export class PaymentService {
     } else {
       try {
         const genRes = await queryNamed(
-          'SELECT razorpay_key, razorpay_secret FROM branch_settings WHERE razorpay_key IS NOT NULL AND razorpay_secret IS NOT NULL LIMIT 1',
+          'SELECT razorpay_key, razorpay_secret FROM branch_settings WHERE branch_id IS NULL AND razorpay_key IS NOT NULL AND razorpay_secret IS NOT NULL LIMIT 1',
           {}
         ).catch(() => ({ rows: [] }));
         if (genRes.rows.length > 0 && genRes.rows[0].razorpay_key && genRes.rows[0].razorpay_secret) {
           keyId = genRes.rows[0].razorpay_key;
           keySecret = genRes.rows[0].razorpay_secret;
+        } else {
+          const anyRes = await queryNamed(
+            'SELECT razorpay_key, razorpay_secret FROM branch_settings WHERE razorpay_key IS NOT NULL AND razorpay_secret IS NOT NULL LIMIT 1',
+            {}
+          ).catch(() => ({ rows: [] }));
+          if (anyRes.rows.length > 0 && anyRes.rows[0].razorpay_key && anyRes.rows[0].razorpay_secret) {
+            keyId = anyRes.rows[0].razorpay_key;
+            keySecret = anyRes.rows[0].razorpay_secret;
+          }
         }
       } catch (err) {}
     }
@@ -202,9 +211,10 @@ export class PaymentService {
       }
       
       // Auto-create tenant upon payment
-      await queryNamed(
+      const tRes = await queryNamed(
         `INSERT INTO tenants (user_id, branch_id, booking_id, tenant_code, status)
-         VALUES (@userId, @branchId, @bookingId, @tenantCode, 'ACTIVE') ON CONFLICT DO NOTHING`,
+         VALUES (@userId, @branchId, @bookingId, @tenantCode, 'ACTIVE') 
+         ON CONFLICT (tenant_code) DO NOTHING RETURNING *`,
         {
           userId: booking.user_id,
           branchId: booking.branch_id,
@@ -213,6 +223,44 @@ export class PaymentService {
         },
         client
       );
+
+      let tenant = tRes.rows[0];
+      if (!tenant) {
+        const findT = await queryNamed(
+          'SELECT * FROM tenants WHERE booking_id = @bookingId OR (user_id = @userId AND branch_id = @branchId) LIMIT 1',
+          { bookingId: data.booking_id, userId: booking.user_id, branchId: booking.branch_id },
+          client
+        );
+        tenant = findT.rows[0];
+      }
+
+      if (tenant) {
+        const rent = Number(booking.monthly_rent) || 0;
+        const deposit = Number(booking.security_deposit) || 0;
+        const total = rent + deposit || data.amount;
+
+        const invRes = await queryNamed(
+          `INSERT INTO rent_invoices (branch_id, tenant_id, invoice_month, due_date, rent_amount, maintenance_amount, total_amount, status)
+           VALUES (@branchId, @tenantId, 'Initial Rent & Deposit', CURRENT_DATE, @rent, @deposit, @total, 'PAID')
+           RETURNING id`,
+          {
+            branchId: booking.branch_id,
+            tenantId: tenant.id,
+            rent,
+            deposit,
+            total,
+          },
+          client
+        );
+
+        if (invRes.rows[0]) {
+          await queryNamed(
+            `UPDATE payments SET invoice_id = @invoiceId WHERE id = @paymentId`,
+            { invoiceId: invRes.rows[0].id, paymentId: paymentRes.rows[0].id },
+            client
+          );
+        }
+      }
 
       await client.query('COMMIT');
       return paymentRes.rows[0];

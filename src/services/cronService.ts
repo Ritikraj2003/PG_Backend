@@ -2,6 +2,55 @@ import pool, { queryNamed } from '../db/database';
 import { NotificationService } from './notificationService';
 
 export class CronService {
+  public static async generateMonthlyInvoices() {
+    console.log('[CRON] Auto-generating monthly invoices for active tenants...');
+    const currentMonth = new Date().toISOString().slice(0, 7); // e.g. '2026-09'
+    const dueDate = new Date();
+    dueDate.setDate(dueDate.getDate() + 7); // Due in 7 days
+
+    const activeTenants = await queryNamed(
+      `SELECT t.id, t.branch_id, r.monthly_rent, u.id as user_id, u.full_name
+       FROM tenants t
+       JOIN bookings b ON t.booking_id = b.id
+       JOIN rooms r ON b.room_id = r.id
+       JOIN users u ON t.user_id = u.id
+       WHERE t.status = 'ACTIVE'`,
+      {}
+    );
+
+    let created = 0;
+    for (const t of activeTenants.rows) {
+      const check = await queryNamed(
+        `SELECT id FROM rent_invoices WHERE tenant_id = @tenantId AND invoice_month = @month`,
+        { tenantId: t.id, month: currentMonth }
+      );
+
+      if (check.rows.length === 0) {
+        const rent = Number(t.monthly_rent || 0);
+        await queryNamed(
+          `INSERT INTO rent_invoices (branch_id, tenant_id, invoice_month, due_date, rent_amount, total_amount, status)
+           VALUES (@branchId, @tenantId, @month, @dueDate, @rent, @rent, 'PENDING')`,
+          {
+            branchId: t.branch_id,
+            tenantId: t.id,
+            month: currentMonth,
+            dueDate,
+            rent,
+          }
+        );
+        created++;
+
+        await NotificationService.sendPushNotification(
+          t.user_id,
+          `New Rent Bill Generated: ${currentMonth}`,
+          `Dear ${t.full_name}, your monthly rent invoice for ${currentMonth} of ₹${rent} has been generated. Due date: ${dueDate.toLocaleDateString()}.`,
+          'SYSTEM'
+        ).catch(() => {});
+      }
+    }
+    return { created };
+  }
+
   public static async runRentReminders() {
     console.log('[CRON] Running rent reminders...');
     const res = await queryNamed(
