@@ -240,13 +240,44 @@ export class OwnerService {
   // BRANCH SETTINGS
   public static async getBranchSettings(branchId: string) {
     const res = await queryNamed('SELECT * FROM branch_settings WHERE branch_id = @branchId', { branchId });
-    return res.rows[0] || null;
+    if (!res.rows[0]) return null;
+    const row = res.rows[0];
+    return {
+      ...row,
+      mail: row.mail || row.smtp_email || '',
+      smtp_email: row.smtp_email || row.mail || '',
+      user_name: row.user_name || row.smtp_username || '',
+      smtp_username: row.smtp_username || row.user_name || '',
+      display_name: row.display_name || row.smtp_display_name || '',
+      smtp_display_name: row.smtp_display_name || row.display_name || '',
+      password: row.password || row.smtp_password || '',
+      smtp_password: row.smtp_password || row.password || '',
+      host: row.host || row.smtp_host || '',
+      smtp_host: row.smtp_host || row.host || '',
+      port: row.port || row.smtp_port || '',
+      smtp_port: row.smtp_port || row.port || '',
+    };
   }
 
   public static async updateBranchSettings(branchId: string, data: any) {
+    const mail = data.mail || data.smtp_email || null;
+    const user_name = data.user_name || data.smtp_username || null;
+    const display_name = data.display_name || data.smtp_display_name || null;
+    const password = data.password || data.smtp_password || null;
+    const host = data.host || data.smtp_host || null;
+    const port = data.port || data.smtp_port || null;
+
     const res = await queryNamed(
-      `INSERT INTO branch_settings (branch_id, razorpay_key, razorpay_secret, upi_id, upi_qr_url, smtp_email, smtp_password)
-       VALUES (@branchId, @razorpayKey, @razorpaySecret, @upiId, @upiQrUrl, @smtpEmail, @smtpPassword)
+      `INSERT INTO branch_settings (
+         branch_id, razorpay_key, razorpay_secret, upi_id, upi_qr_url,
+         smtp_email, smtp_password, smtp_host, smtp_port, smtp_username, smtp_display_name,
+         mail, user_name, display_name, password, host, port
+       )
+       VALUES (
+         @branchId, @razorpayKey, @razorpaySecret, @upiId, @upiQrUrl,
+         @smtpEmail, @smtpPassword, @smtpHost, @smtpPort, @smtpUsername, @smtpDisplayName,
+         @mail, @userName, @displayName, @password, @host, @port
+       )
        ON CONFLICT (branch_id) DO UPDATE SET
          razorpay_key = EXCLUDED.razorpay_key,
          razorpay_secret = EXCLUDED.razorpay_secret,
@@ -254,6 +285,16 @@ export class OwnerService {
          upi_qr_url = COALESCE(EXCLUDED.upi_qr_url, branch_settings.upi_qr_url),
          smtp_email = EXCLUDED.smtp_email,
          smtp_password = EXCLUDED.smtp_password,
+         smtp_host = EXCLUDED.smtp_host,
+         smtp_port = EXCLUDED.smtp_port,
+         smtp_username = EXCLUDED.smtp_username,
+         smtp_display_name = EXCLUDED.smtp_display_name,
+         mail = EXCLUDED.mail,
+         user_name = EXCLUDED.user_name,
+         display_name = EXCLUDED.display_name,
+         password = EXCLUDED.password,
+         host = EXCLUDED.host,
+         port = EXCLUDED.port,
          updated_at = CURRENT_TIMESTAMP
        RETURNING *`,
       {
@@ -262,8 +303,18 @@ export class OwnerService {
         razorpaySecret: data.razorpay_secret || null,
         upiId: data.upi_id || null,
         upiQrUrl: data.upi_qr_url || null,
-        smtpEmail: data.smtp_email || null,
-        smtpPassword: data.smtp_password || null,
+        smtpEmail: mail,
+        smtpPassword: password,
+        smtpHost: host,
+        smtpPort: port,
+        smtpUsername: user_name,
+        smtpDisplayName: display_name,
+        mail: mail,
+        userName: user_name,
+        displayName: display_name,
+        password: password,
+        host: host,
+        port: port,
       }
     );
     return res.rows[0];

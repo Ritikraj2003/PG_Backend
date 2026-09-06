@@ -15,7 +15,13 @@ const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, getUploadsDir()),
   filename: (_req, file, cb) => cb(null, `qr-${Date.now()}${path.extname(file.originalname)}`),
 });
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: 25 * 1024 * 1024,
+    fieldSize: 25 * 1024 * 1024,
+  },
+});
 
 const router = Router();
 

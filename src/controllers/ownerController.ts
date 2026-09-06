@@ -127,16 +127,26 @@ export class OwnerController {
 
   public static async updateBranchSettings(req: Request, res: Response) {
     try {
-      const { branch_id, razorpay_key, razorpay_secret, upi_id, smtp_email, smtp_password } = req.body;
-      let upi_qr_url = req.body.upi_qr_url;
-      if (req.file) {
-        upi_qr_url = await StorageService.uploadFile(req.file.path, 'pg_branch_qr');
-        try {
-          const fs = require('fs');
-          if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-        } catch (e) {}
-      }
-      const data = { razorpay_key, razorpay_secret, upi_id, upi_qr_url, smtp_email, smtp_password };
+      const {
+        branch_id, razorpay_key, razorpay_secret, upi_id,
+        smtp_email, smtp_password, smtp_host, smtp_port, smtp_username, smtp_display_name,
+        mail, user_name, display_name, password, host, port
+      } = req.body;
+      const data = {
+        razorpay_key, razorpay_secret, upi_id,
+        smtp_email: mail || smtp_email,
+        smtp_password: password || smtp_password,
+        smtp_host: host || smtp_host,
+        smtp_port: port || smtp_port,
+        smtp_username: user_name || smtp_username,
+        smtp_display_name: display_name || smtp_display_name,
+        mail: mail || smtp_email,
+        user_name: user_name || smtp_username,
+        display_name: display_name || smtp_display_name,
+        password: password || smtp_password,
+        host: host || smtp_host,
+        port: port || smtp_port,
+      };
       const settings = await OwnerService.updateBranchSettings(branch_id, data);
       return sendSuccess(res, settings, 'Branch settings updated');
     } catch (err: any) {

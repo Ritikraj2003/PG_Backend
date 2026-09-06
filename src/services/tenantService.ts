@@ -272,8 +272,15 @@ export class TenantService {
   }
 
   public static async getBranchSettings(branchId: string) {
-    const res = await queryNamed('SELECT upi_id, upi_qr_url, razorpay_key FROM branch_settings WHERE branch_id = @branchId', { branchId });
-    return res.rows[0];
+    if (branchId) {
+      const res = await queryNamed('SELECT upi_id, upi_qr_url, razorpay_key FROM branch_settings WHERE branch_id = @branchId', { branchId });
+      if (res.rows.length > 0 && res.rows[0]?.upi_id) {
+        return res.rows[0];
+      }
+    }
+    // Fallback to platform settings if branch hasn't configured custom UPI
+    const fallback = await queryNamed('SELECT upi_id, upi_qr_url, razorpay_key FROM branch_settings WHERE branch_id IS NULL LIMIT 1', {});
+    return fallback.rows[0] || null;
   }
 
   public static async createComplaint(data: any) {

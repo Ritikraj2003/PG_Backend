@@ -37,7 +37,10 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: {
+    fileSize: 25 * 1024 * 1024,
+    fieldSize: 25 * 1024 * 1024,
+  },
 });
 
 const router = Router();
@@ -54,7 +57,18 @@ router.get('/branches', OwnerController.getBranches);
 
 // Branch Settings
 router.get('/branch-settings', OwnerController.getBranchSettings);
-router.put('/branch-settings', upload.single('qr_image'), OwnerController.updateBranchSettings);
+const uploadQrFields = upload.fields([
+  { name: 'upi_qr', maxCount: 1 },
+  { name: 'qr_image', maxCount: 1 }
+]);
+const normalizeQrFile = (req: any, res: any, next: any) => {
+  if (req.files) {
+    req.file = req.files['upi_qr']?.[0] || req.files['qr_image']?.[0];
+  }
+  next();
+};
+router.put('/branch-settings', uploadQrFields, normalizeQrFile, OwnerController.updateBranchSettings);
+router.post('/branch-settings', uploadQrFields, normalizeQrFile, OwnerController.updateBranchSettings);
 
 // Rooms
 router.post('/rooms', upload.array('images', 10), verifyBranchOwnership, OwnerController.createRoom);

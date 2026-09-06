@@ -36,7 +36,13 @@ const storage = multer.diskStorage({
   },
 });
 
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: 25 * 1024 * 1024,
+    fieldSize: 25 * 1024 * 1024,
+  },
+});
 
 router.post(
   '/owners',
@@ -71,8 +77,18 @@ router.get('/users', AdminController.listUsers);
 router.get('/reports', AdminController.getGlobalReports);
 
 // General Settings (SuperAdmin Platform Credentials)
+const uploadAdminQrFields = upload.fields([
+  { name: 'upi_qr', maxCount: 1 },
+  { name: 'qr_image', maxCount: 1 }
+]);
+const normalizeAdminQrFile = (req: any, res: any, next: any) => {
+  if (req.files) {
+    req.file = req.files['upi_qr']?.[0] || req.files['qr_image']?.[0];
+  }
+  next();
+};
 router.get('/general-settings', AdminController.getGeneralSettings);
-router.put('/general-settings', upload.single('upi_qr'), AdminController.updateGeneralSettings);
-router.post('/general-settings', upload.single('upi_qr'), AdminController.updateGeneralSettings);
+router.put('/general-settings', uploadAdminQrFields, normalizeAdminQrFile, AdminController.updateGeneralSettings);
+router.post('/general-settings', uploadAdminQrFields, normalizeAdminQrFile, AdminController.updateGeneralSettings);
 
 export default router;

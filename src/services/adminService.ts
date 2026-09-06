@@ -608,9 +608,34 @@ export class AdminService {
         upi_qr_url: '',
         smtp_email: '',
         smtp_password: '',
+        smtp_host: '',
+        smtp_port: '',
+        smtp_username: '',
+        smtp_display_name: '',
+        mail: '',
+        user_name: '',
+        display_name: '',
+        password: '',
+        host: '',
+        port: '',
       };
     }
-    return res.rows[0];
+    const row = res.rows[0];
+    return {
+      ...row,
+      mail: row.mail || row.smtp_email || '',
+      smtp_email: row.smtp_email || row.mail || '',
+      user_name: row.user_name || row.smtp_username || '',
+      smtp_username: row.smtp_username || row.user_name || '',
+      display_name: row.display_name || row.smtp_display_name || '',
+      smtp_display_name: row.smtp_display_name || row.display_name || '',
+      password: row.password || row.smtp_password || '',
+      smtp_password: row.smtp_password || row.password || '',
+      host: row.host || row.smtp_host || '',
+      smtp_host: row.smtp_host || row.host || '',
+      port: row.port || row.smtp_port || '',
+      smtp_port: row.smtp_port || row.port || '',
+    };
   }
 
   public static async updateGeneralSettings(data: any) {
@@ -618,6 +643,13 @@ export class AdminService {
       'SELECT id FROM branch_settings WHERE branch_id IS NULL LIMIT 1',
       {}
     );
+
+    const mail = data.mail || data.smtp_email || null;
+    const user_name = data.user_name || data.smtp_username || null;
+    const display_name = data.display_name || data.smtp_display_name || null;
+    const password = data.password || data.smtp_password || null;
+    const host = data.host || data.smtp_host || null;
+    const port = data.port || data.smtp_port || null;
 
     if (existing.rows.length > 0) {
       const res = await queryNamed(
@@ -628,6 +660,16 @@ export class AdminService {
              upi_qr_url = COALESCE(@upi_qr_url, upi_qr_url),
              smtp_email = @smtp_email,
              smtp_password = @smtp_password,
+             smtp_host = @smtp_host,
+             smtp_port = @smtp_port,
+             smtp_username = @smtp_username,
+             smtp_display_name = @smtp_display_name,
+             mail = @mail,
+             user_name = @user_name,
+             display_name = @display_name,
+             password = @password,
+             host = @host,
+             port = @port,
              updated_at = NOW()
          WHERE branch_id IS NULL
          RETURNING *`,
@@ -636,23 +678,51 @@ export class AdminService {
           razorpay_secret: data.razorpay_secret || null,
           upi_id: data.upi_id || null,
           upi_qr_url: data.upi_qr_url || null,
-          smtp_email: data.smtp_email || null,
-          smtp_password: data.smtp_password || null,
+          smtp_email: mail,
+          smtp_password: password,
+          smtp_host: host,
+          smtp_port: port,
+          smtp_username: user_name,
+          smtp_display_name: display_name,
+          mail: mail,
+          user_name: user_name,
+          display_name: display_name,
+          password: password,
+          host: host,
+          port: port,
         }
       );
       return res.rows[0];
     } else {
       const res = await queryNamed(
-        `INSERT INTO branch_settings (branch_id, razorpay_key, razorpay_secret, upi_id, upi_qr_url, smtp_email, smtp_password, updated_at)
-         VALUES (NULL, @razorpay_key, @razorpay_secret, @upi_id, @upi_qr_url, @smtp_email, @smtp_password, NOW())
+        `INSERT INTO branch_settings (
+           branch_id, razorpay_key, razorpay_secret, upi_id, upi_qr_url,
+           smtp_email, smtp_password, smtp_host, smtp_port, smtp_username, smtp_display_name,
+           mail, user_name, display_name, password, host, port, updated_at
+         )
+         VALUES (
+           NULL, @razorpay_key, @razorpay_secret, @upi_id, @upi_qr_url,
+           @smtp_email, @smtp_password, @smtp_host, @smtp_port, @smtp_username, @smtp_display_name,
+           @mail, @user_name, @display_name, @password, @host, @port, NOW()
+         )
          RETURNING *`,
         {
           razorpay_key: data.razorpay_key || null,
           razorpay_secret: data.razorpay_secret || null,
           upi_id: data.upi_id || null,
           upi_qr_url: data.upi_qr_url || null,
-          smtp_email: data.smtp_email || null,
-          smtp_password: data.smtp_password || null,
+          smtp_email: mail,
+          smtp_password: password,
+          smtp_host: host,
+          smtp_port: port,
+          smtp_username: user_name,
+          smtp_display_name: display_name,
+          mail: mail,
+          user_name: user_name,
+          display_name: display_name,
+          password: password,
+          host: host,
+          port: port,
         }
       );
       return res.rows[0];

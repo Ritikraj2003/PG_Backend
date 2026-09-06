@@ -86,6 +86,16 @@ CREATE TABLE IF NOT EXISTS branch_settings (
     upi_qr_url TEXT,
     smtp_email VARCHAR(255),
     smtp_password VARCHAR(255),
+    smtp_host VARCHAR(255),
+    smtp_port VARCHAR(50),
+    smtp_username VARCHAR(255),
+    smtp_display_name VARCHAR(255),
+    mail VARCHAR(255),
+    password VARCHAR(255),
+    host VARCHAR(255),
+    port VARCHAR(50),
+    user_name VARCHAR(255),
+    display_name VARCHAR(255),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 

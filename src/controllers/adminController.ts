@@ -166,16 +166,7 @@ export class AdminController {
 
   public static async updateGeneralSettings(req: Request, res: Response) {
     try {
-      let upi_qr_url = req.body.upi_qr_url;
-      if (req.file) {
-        upi_qr_url = await StorageService.uploadFile(req.file.path, 'pg_admin_qr');
-        try {
-          const fs = require('fs');
-          if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-        } catch (e) {}
-      }
-      const data = { ...req.body, upi_qr_url };
-      const settings = await AdminService.updateGeneralSettings(data);
+      const settings = await AdminService.updateGeneralSettings(req.body);
       return sendSuccess(res, settings, 'General settings updated successfully');
     } catch (err: any) {
       return sendError(res, err.message, 400);
