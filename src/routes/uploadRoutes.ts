@@ -37,12 +37,17 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 },
 });
 
-router.post('/', upload.single('file'), (req: Request, res: Response) => {
+import { StorageService } from '../services/storageService';
+
+router.post('/', upload.single('file'), async (req: Request, res: Response) => {
   try {
     if (!req.file) {
       return sendError(res, 'No file uploaded', 400);
     }
-    const fileUrl = `/uploads/${req.file.filename}`;
+    const fileUrl = await StorageService.uploadFile(req.file.path, 'pg_uploads');
+    try {
+      if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+    } catch (e) {}
     return sendSuccess(res, { url: fileUrl, filename: req.file.filename }, 'File uploaded successfully', 201);
   } catch (err: any) {
     return sendError(res, err.message || 'File upload failed', 500);

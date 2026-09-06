@@ -19,6 +19,11 @@ export const verifyBranchOwnership = async (req: Request, res: Response, next: N
       return sendError(res, 'Branch ID parameter is required', 400);
     }
 
+    // Staff member assigned to specific branch cannot access other branches
+    if (req.user.branchId && req.user.branchId !== branchId) {
+      return sendError(res, 'Forbidden: You only have access to your assigned branch', 403);
+    }
+
     // 1. Get user ID from JWT (req.user.id)
     // 2. Find Owner
     if (!req.user.ownerId) {

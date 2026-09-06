@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { OwnerService } from '../services/ownerService';
 import { PaymentService } from '../services/paymentService';
+import { StorageService } from '../services/storageService';
 import { sendSuccess, sendError } from '../utils/response';
 
 export class OwnerController {
@@ -37,7 +38,7 @@ export class OwnerController {
   // VERIFY RAZORPAY SUBSCRIPTION PAYMENT & RENEW
   public static async verifySubscriptionPayment(req: Request, res: Response) {
     try {
-      const ownerId = req.user!.id;
+      const ownerId = req.user!.ownerId || req.user!.id;
       const {
         razorpay_order_id,
         razorpay_payment_id,
@@ -79,9 +80,9 @@ export class OwnerController {
   // DASHBOARD
   public static async getDashboard(req: Request, res: Response) {
     try {
-      const ownerId = req.user!.id;
-      const branchId = req.query.branch_id as string | undefined;
-      const dashboard = await OwnerService.getDashboardData(ownerId, branchId);
+      const ownerId = req.user!.ownerId || req.user!.id;
+      const branchId = (req.query.branch_id as string | undefined) || req.user?.branchId;
+      const dashboard = await OwnerService.getDashboardData(ownerId, branchId, req.user?.branchId);
       return sendSuccess(res, dashboard, 'Owner dashboard retrieved');
     } catch (err: any) {
       return sendError(res, err.message, 500);
@@ -90,7 +91,7 @@ export class OwnerController {
 
   public static async renewSubscription(req: Request, res: Response) {
     try {
-      const ownerId = req.user!.id;
+      const ownerId = req.user!.ownerId || req.user!.id;
       const data = {
         ...req.body,
         branch_id: req.params.id || req.body.branch_id,
@@ -104,8 +105,8 @@ export class OwnerController {
 
   public static async getBranches(req: Request, res: Response) {
     try {
-      const ownerId = req.user!.id;
-      const branches = await OwnerService.getOwnerBranches(ownerId);
+      const ownerId = req.user!.ownerId || req.user!.id;
+      const branches = await OwnerService.getOwnerBranches(ownerId, req.user?.branchId);
       return sendSuccess(res, branches, 'Owner branches retrieved');
     } catch (err: any) {
       return sendError(res, err.message, 500);
@@ -129,7 +130,11 @@ export class OwnerController {
       const { branch_id, razorpay_key, razorpay_secret, upi_id, smtp_email, smtp_password } = req.body;
       let upi_qr_url = req.body.upi_qr_url;
       if (req.file) {
-        upi_qr_url = `/uploads/${req.file.filename}`;
+        upi_qr_url = await StorageService.uploadFile(req.file.path, 'pg_branch_qr');
+        try {
+          const fs = require('fs');
+          if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+        } catch (e) {}
       }
       const data = { razorpay_key, razorpay_secret, upi_id, upi_qr_url, smtp_email, smtp_password };
       const settings = await OwnerService.updateBranchSettings(branch_id, data);
@@ -160,8 +165,8 @@ export class OwnerController {
 
   public static async getRooms(req: Request, res: Response) {
     try {
-      const { branch_id } = req.query;
-      const rooms = await OwnerService.getRooms(branch_id as string);
+      const branch_id = req.user?.branchId || (req.query.branch_id as string);
+      const rooms = await OwnerService.getRooms(branch_id);
       return sendSuccess(res, rooms, 'Rooms list retrieved');
     } catch (err: any) {
       return sendError(res, err.message, 500);
@@ -210,8 +215,8 @@ export class OwnerController {
   // TENANTS & BOOKINGS
   public static async getTenants(req: Request, res: Response) {
     try {
-      const { branch_id } = req.query;
-      const tenants = await OwnerService.getTenants(branch_id as string);
+      const branch_id = req.user?.branchId || (req.query.branch_id as string);
+      const tenants = await OwnerService.getTenants(branch_id);
       return sendSuccess(res, tenants, 'Tenants list retrieved');
     } catch (err: any) {
       return sendError(res, err.message, 500);
@@ -220,8 +225,8 @@ export class OwnerController {
 
   public static async getBookings(req: Request, res: Response) {
     try {
-      const { branch_id } = req.query;
-      const bookings = await OwnerService.getBookings(branch_id as string);
+      const branch_id = req.user?.branchId || (req.query.branch_id as string);
+      const bookings = await OwnerService.getBookings(branch_id);
       return sendSuccess(res, bookings, 'Bookings list retrieved');
     } catch (err: any) {
       return sendError(res, err.message, 500);
@@ -262,8 +267,8 @@ export class OwnerController {
 
   public static async getRentInvoices(req: Request, res: Response) {
     try {
-      const { branch_id } = req.query;
-      const invoices = await OwnerService.getRentInvoices(branch_id as string);
+      const branch_id = req.user?.branchId || (req.query.branch_id as string);
+      const invoices = await OwnerService.getRentInvoices(branch_id);
       return sendSuccess(res, invoices, 'Invoices list retrieved');
     } catch (err: any) {
       return sendError(res, err.message, 500);
@@ -272,8 +277,8 @@ export class OwnerController {
 
   public static async getPayments(req: Request, res: Response) {
     try {
-      const { branch_id } = req.query;
-      const payments = await OwnerService.getPayments(branch_id as string);
+      const branch_id = req.user?.branchId || (req.query.branch_id as string);
+      const payments = await OwnerService.getPayments(branch_id);
       return sendSuccess(res, payments, 'Payments list retrieved');
     } catch (err: any) {
       return sendError(res, err.message, 500);
@@ -294,8 +299,8 @@ export class OwnerController {
   // COMPLAINTS
   public static async getComplaints(req: Request, res: Response) {
     try {
-      const { branch_id } = req.query;
-      const complaints = await OwnerService.getComplaints(branch_id as string);
+      const branch_id = req.user?.branchId || (req.query.branch_id as string);
+      const complaints = await OwnerService.getComplaints(branch_id);
       return sendSuccess(res, complaints, 'Complaints list retrieved');
     } catch (err: any) {
       return sendError(res, err.message, 500);
@@ -319,7 +324,11 @@ export class OwnerController {
     try {
       let receipt_url = req.body.receipt_url;
       if (req.file) {
-        receipt_url = `/uploads/${req.file.filename}`;
+        receipt_url = await StorageService.uploadFile(req.file.path, 'pg_expenses');
+        try {
+          const fs = require('fs');
+          if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+        } catch (e) {}
       }
       const data = { ...req.body, receipt_url };
       const expense = await OwnerService.createExpense(data);
@@ -331,8 +340,8 @@ export class OwnerController {
 
   public static async getExpenses(req: Request, res: Response) {
     try {
-      const { branch_id } = req.query;
-      const expenses = await OwnerService.getExpenses(branch_id as string);
+      const branch_id = req.user?.branchId || (req.query.branch_id as string);
+      const expenses = await OwnerService.getExpenses(branch_id);
       return sendSuccess(res, expenses, 'Expenses list retrieved');
     } catch (err: any) {
       return sendError(res, err.message, 500);
@@ -351,8 +360,8 @@ export class OwnerController {
 
   public static async getNotices(req: Request, res: Response) {
     try {
-      const { branch_id } = req.query;
-      const notices = await OwnerService.getNotices(branch_id as string);
+      const branch_id = req.user?.branchId || (req.query.branch_id as string);
+      const notices = await OwnerService.getNotices(branch_id);
       return sendSuccess(res, notices, 'Notices list retrieved');
     } catch (err: any) {
       return sendError(res, err.message, 500);

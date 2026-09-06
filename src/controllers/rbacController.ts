@@ -18,7 +18,8 @@ export class RbacController {
       if (!ownerId) {
         return sendError(res, 'Owner ID not found in session', 400);
       }
-      const roles = await RbacService.getRoles(ownerId);
+      const branchId = req.query.branch_id as string | undefined;
+      const roles = await RbacService.getRoles(ownerId, branchId);
       return sendSuccess(res, roles, 'Roles retrieved successfully');
     } catch (error: any) {
       return sendError(res, error.message || 'Failed to retrieve roles', 500);
@@ -33,7 +34,7 @@ export class RbacController {
         return sendError(res, 'Unauthorized', 401);
       }
 
-      const { name, description, permission_ids, is_active } = req.body;
+      const { name, description, permission_ids, is_active, branch_id } = req.body;
       if (!name || typeof name !== 'string' || !name.trim()) {
         return sendError(res, 'Role name is required', 400);
       }
@@ -43,6 +44,7 @@ export class RbacController {
         description,
         permission_ids: Array.isArray(permission_ids) ? permission_ids.map(Number) : [],
         is_active: is_active !== undefined ? Boolean(is_active) : true,
+        branch_id: branch_id || null,
       });
       return sendSuccess(res, role, 'Role created successfully', 201);
     } catch (error: any) {
@@ -63,7 +65,7 @@ export class RbacController {
         return sendError(res, 'Invalid role ID', 400);
       }
 
-      const { name, description, permission_ids, is_active } = req.body;
+      const { name, description, permission_ids, is_active, branch_id } = req.body;
       if (!name || typeof name !== 'string' || !name.trim()) {
         return sendError(res, 'Role name is required', 400);
       }
@@ -73,6 +75,7 @@ export class RbacController {
         description,
         permission_ids: Array.isArray(permission_ids) ? permission_ids.map(Number) : [],
         is_active: is_active !== undefined ? Boolean(is_active) : true,
+        branch_id: branch_id !== undefined ? (branch_id || null) : undefined,
       });
       return sendSuccess(res, role, 'Role updated successfully');
     } catch (error: any) {

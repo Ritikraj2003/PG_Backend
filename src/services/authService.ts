@@ -110,7 +110,16 @@ export class AuthService {
       throw new Error('Invalid email/mobile or password');
     }
 
-    const payload = { userId: user.id, email: user.email, roles: user.roles };
+    const isOwner = user.roles.includes('COMPANY_ADMIN');
+    const isSuperAdmin = user.roles.includes('SUPER_ADMIN');
+
+    // Ensure staff accounts (linked to an owner or with custom role) include STAFF role
+    const userRoles: string[] = [...(user.roles || [])];
+    if (user.owner_id && !userRoles.includes('STAFF')) {
+      userRoles.push('STAFF');
+    }
+
+    const payload = { userId: user.id, email: user.email, roles: userRoles };
     const accessToken = generateAccessToken(payload);
     const refreshToken = generateRefreshToken(payload);
 
@@ -119,9 +128,6 @@ export class AuthService {
        VALUES (@userId, @token, NOW() + INTERVAL '7 days')`,
       { userId: user.id, token: refreshToken }
     );
-
-    const isOwner = user.roles.includes('COMPANY_ADMIN');
-    const isSuperAdmin = user.roles.includes('SUPER_ADMIN');
 
     // Permissions resolution
     let permissions: string[] = [];
@@ -149,20 +155,33 @@ export class AuthService {
       const tRes = await pool.query('SELECT branch_id FROM tenants WHERE user_id = $1 LIMIT 1', [user.id]);
       if (tRes.rows.length > 0) {
         branchId = tRes.rows[0].branch_id;
+      } else {
+        const roleBranchRes = await pool.query(
+          `SELECT r.branch_id 
+           FROM roles r 
+           JOIN user_roles ur ON ur.role_id = r.id 
+           WHERE ur.user_id = $1 AND r.branch_id IS NOT NULL 
+           LIMIT 1`,
+          [user.id]
+        );
+        if (roleBranchRes.rows.length > 0) {
+          branchId = roleBranchRes.rows[0].branch_id;
+        }
       }
     }
 
     let subscription: any = null;
-    if (isOwner) {
+    const effectiveOwnerId = isOwner ? user.id : (user.owner_id || null);
+    if (effectiveOwnerId) {
       const subRes = await queryNamed(
         `SELECT id, plan_name, duration_months, start_date, end_date, status,
                 CASE WHEN end_date < CURRENT_TIMESTAMP THEN TRUE ELSE FALSE END as is_expired,
                 GREATEST(0, EXTRACT(DAY FROM end_date - CURRENT_TIMESTAMP)::INT) as days_remaining
          FROM subscriptions
-         WHERE owner_id = @userId
+         WHERE owner_id = @effectiveOwnerId
          ORDER BY created_at DESC
          LIMIT 1`,
-        { userId: user.id }
+        { effectiveOwnerId }
       );
       if (subRes.rows.length > 0) {
         const sub = subRes.rows[0];
@@ -179,7 +198,7 @@ export class AuthService {
         full_name: user.full_name,
         email: user.email,
         mobile_number: user.mobile_number,
-        roles: user.roles,
+        roles: userRoles,
         subscription,
         permissions,
         owner_id: isOwner ? user.id : (user.owner_id || undefined),

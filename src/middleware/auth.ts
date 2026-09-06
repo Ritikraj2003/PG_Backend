@@ -42,6 +42,12 @@ export const authenticate = async (req: Request, res: Response, next: NextFuncti
     const isOwner = row.roles.includes('COMPANY_ADMIN');
     const isSuperAdmin = row.roles.includes('SUPER_ADMIN');
 
+    // Ensure staff accounts (linked to an owner or with custom role) include STAFF role
+    const roles: string[] = [...(row.roles || [])];
+    if (row.owner_id && !roles.includes('STAFF')) {
+      roles.push('STAFF');
+    }
+
     // Find optional tenant id & branch id
     let tenantId: string | undefined;
     let branchId: string | undefined;
@@ -53,6 +59,18 @@ export const authenticate = async (req: Request, res: Response, next: NextFuncti
       const ubRes = await pool.query('SELECT branch_id FROM user_branches WHERE user_id = $1 LIMIT 1', [row.id]);
       if (ubRes.rows.length > 0) {
         branchId = ubRes.rows[0].branch_id;
+      } else {
+        const roleBranchRes = await pool.query(
+          `SELECT r.branch_id 
+           FROM roles r 
+           JOIN user_roles ur ON ur.role_id = r.id 
+           WHERE ur.user_id = $1 AND r.branch_id IS NOT NULL 
+           LIMIT 1`,
+          [row.id]
+        );
+        if (roleBranchRes.rows.length > 0) {
+          branchId = roleBranchRes.rows[0].branch_id;
+        }
       }
     }
 
@@ -78,7 +96,7 @@ export const authenticate = async (req: Request, res: Response, next: NextFuncti
       email: row.email,
       fullName: row.full_name,
       mobileNumber: row.mobile_number,
-      roles: row.roles,
+      roles,
       ownerId: isOwner ? row.id : (row.owner_id || undefined),
       tenantId,
       branchId,

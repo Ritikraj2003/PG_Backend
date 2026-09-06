@@ -7,7 +7,7 @@ export class RbacService {
    */
   public static async getPermissions() {
     const res = await pool.query(
-      `SELECT id, permission_name, permission_code, created_by, created_on, last_modified_by, last_modified_on 
+      `SELECT id::INT as id, permission_name, permission_code, created_by, created_on, last_modified_by, last_modified_on 
        FROM public.permissions 
        ORDER BY id ASC`
     );
@@ -17,50 +17,64 @@ export class RbacService {
   /**
    * List roles accessible by company owner (built-in system roles + custom roles created by owner)
    */
-  public static async getRoles(ownerId: string) {
+  public static async getRoles(ownerId: string, branchId?: string) {
+    const params: any[] = [ownerId];
+    let branchFilter = '';
+    if (branchId) {
+      params.push(branchId);
+      branchFilter = `AND (r.branch_id = $${params.length} OR r.branch_id IS NULL)`;
+    }
+
     const res = await pool.query(
-      `SELECT r.id, r.name, r.description, r.owner_id, r.created_by, r.created_on, r.is_active,
-              COALESCE(ARRAY_AGG(rpm.permission_id) FILTER (WHERE rpm.permission_id IS NOT NULL), '{}') as permission_ids,
+      `SELECT r.id, r.name, r.description, r.owner_id, r.created_by, r.created_on, r.is_active, r.branch_id,
+              b.name as branch_name,
+              COALESCE(ARRAY_AGG(DISTINCT rpm.permission_id) FILTER (WHERE rpm.permission_id IS NOT NULL), '{}') as permission_ids,
               (SELECT COUNT(*)::INT FROM user_roles ur WHERE ur.role_id = r.id) as staff_count
        FROM roles r
        LEFT JOIN role_permission_mapping rpm ON r.id = rpm.role_id
-       WHERE r.owner_id = $1 OR r.owner_id IS NULL
-       GROUP BY r.id
+       LEFT JOIN branches b ON r.branch_id = b.id
+       WHERE (r.owner_id = $1 OR r.owner_id IS NULL) ${branchFilter}
+       GROUP BY r.id, b.name
        ORDER BY r.id ASC`,
-      [ownerId]
+      params
     );
 
     return res.rows;
   }
 
   /**
-   * Create a new custom role for this owner and assign permissions in role_permission_mapping
+   * Create a new custom role for this owner and assign permissions in role_permission_mapping (with branch_id)
    */
   public static async createRole(
     ownerId: string,
     userId: string,
-    data: { name: string; description?: string; permission_ids?: number[]; is_active?: boolean }
+    data: { name: string; description?: string; permission_ids?: number[]; is_active?: boolean; branch_id?: string | null }
   ) {
     const client = await pool.getClient();
     try {
       await client.query('BEGIN');
 
       const isActive = data.is_active !== undefined ? data.is_active : true;
+      const branchId = data.branch_id ? data.branch_id : null;
+
       const roleRes = await client.query(
-        `INSERT INTO roles (name, description, owner_id, created_by, created_on, last_modified_by, last_modified_on, is_active)
-         VALUES ($1, $2, $3, $4, NOW(), $4, NOW(), $5)
-         RETURNING id, name, description, owner_id, is_active, created_on`,
-        [data.name.trim(), data.description || '', ownerId, userId, isActive]
+        `INSERT INTO roles (name, description, owner_id, created_by, created_on, last_modified_by, last_modified_on, is_active, branch_id)
+         VALUES ($1, $2, $3, $4, NOW(), $4, NOW(), $5, $6)
+         RETURNING id, name, description, owner_id, is_active, created_on, branch_id`,
+        [data.name.trim(), data.description || '', ownerId, userId, isActive, branchId]
       );
       const role = roleRes.rows[0];
 
       if (data.permission_ids && data.permission_ids.length > 0) {
         for (const permId of data.permission_ids) {
           await client.query(
-            `INSERT INTO role_permission_mapping (role_id, permission_id, created_by, created_on, last_modified_by, last_modified_on)
-             VALUES ($1, $2, $3, NOW(), $3, NOW())
-             ON CONFLICT (role_id, permission_id) DO NOTHING`,
-            [role.id, permId, userId]
+            `INSERT INTO role_permission_mapping (role_id, permission_id, branch_id, created_by, created_on, last_modified_by, last_modified_on)
+             VALUES ($1, $2, $3, $4, NOW(), $4, NOW())
+             ON CONFLICT (role_id, permission_id) DO UPDATE SET 
+               branch_id = EXCLUDED.branch_id, 
+               last_modified_by = EXCLUDED.last_modified_by, 
+               last_modified_on = NOW()`,
+            [role.id, permId, branchId, userId]
           );
         }
       }
@@ -79,22 +93,24 @@ export class RbacService {
   }
 
   /**
-   * Update an existing custom role and update role_permission_mapping
+   * Update an existing custom role and update role_permission_mapping (with branch_id)
    */
   public static async updateRole(
     ownerId: string,
     userId: string,
     roleId: number,
-    data: { name: string; description?: string; permission_ids?: number[]; is_active?: boolean }
+    data: { name: string; description?: string; permission_ids?: number[]; is_active?: boolean; branch_id?: string | null }
   ) {
     // Cannot edit built-in system roles
-    const check = await pool.query('SELECT owner_id FROM roles WHERE id = $1', [roleId]);
+    const check = await pool.query('SELECT owner_id, branch_id FROM roles WHERE id = $1', [roleId]);
     if (check.rows.length === 0) {
       throw new Error('Role not found');
     }
     if (!check.rows[0].owner_id || check.rows[0].owner_id !== ownerId) {
       throw new Error('You do not have permission to modify this role');
     }
+
+    const branchId = data.branch_id !== undefined ? (data.branch_id || null) : check.rows[0].branch_id;
 
     const client = await pool.getClient();
     try {
@@ -103,10 +119,10 @@ export class RbacService {
       const isActive = data.is_active !== undefined ? data.is_active : true;
       const roleRes = await client.query(
         `UPDATE roles
-         SET name = $1, description = $2, is_active = $3, last_modified_by = $4, last_modified_on = NOW()
-         WHERE id = $5 AND owner_id = $6
-         RETURNING id, name, description, owner_id, is_active, created_on, last_modified_on`,
-        [data.name.trim(), data.description || '', isActive, userId, roleId, ownerId]
+         SET name = $1, description = $2, is_active = $3, branch_id = $4, last_modified_by = $5, last_modified_on = NOW()
+         WHERE id = $6 AND owner_id = $7
+         RETURNING id, name, description, owner_id, is_active, created_on, last_modified_on, branch_id`,
+        [data.name.trim(), data.description || '', isActive, branchId, userId, roleId, ownerId]
       );
       const role = roleRes.rows[0];
 
@@ -114,10 +130,13 @@ export class RbacService {
         await client.query('DELETE FROM role_permission_mapping WHERE role_id = $1', [roleId]);
         for (const permId of data.permission_ids) {
           await client.query(
-            `INSERT INTO role_permission_mapping (role_id, permission_id, created_by, created_on, last_modified_by, last_modified_on)
-             VALUES ($1, $2, $3, NOW(), $3, NOW())
-             ON CONFLICT (role_id, permission_id) DO NOTHING`,
-            [roleId, permId, userId]
+            `INSERT INTO role_permission_mapping (role_id, permission_id, branch_id, created_by, created_on, last_modified_by, last_modified_on)
+             VALUES ($1, $2, $3, $4, NOW(), $4, NOW())
+             ON CONFLICT (role_id, permission_id) DO UPDATE SET 
+               branch_id = EXCLUDED.branch_id, 
+               last_modified_by = EXCLUDED.last_modified_by, 
+               last_modified_on = NOW()`,
+            [roleId, permId, branchId, userId]
           );
         }
       }
@@ -216,11 +235,20 @@ export class RbacService {
       );
       const user = userRes.rows[0];
 
-      // Assign role
+      // Assign custom/selected role
       await client.query(
         'INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)',
         [user.id, data.role_id]
       );
+
+      // Also ensure base STAFF role is assigned for system role authorization
+      const staffRoleRes = await client.query("SELECT id FROM roles WHERE name = 'STAFF' LIMIT 1");
+      if (staffRoleRes.rows.length > 0 && staffRoleRes.rows[0].id !== data.role_id) {
+        await client.query(
+          'INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)',
+          [user.id, staffRoleRes.rows[0].id]
+        );
+      }
 
       // Assign branch if provided
       if (data.branch_id) {
@@ -313,6 +341,14 @@ export class RbacService {
       if (data.role_id) {
         await client.query('DELETE FROM user_roles WHERE user_id = $1', [staffId]);
         await client.query('INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)', [staffId, data.role_id]);
+
+        const staffRoleRes = await client.query("SELECT id FROM roles WHERE name = 'STAFF' LIMIT 1");
+        if (staffRoleRes.rows.length > 0 && staffRoleRes.rows[0].id !== data.role_id) {
+          await client.query(
+            'INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+            [staffId, staffRoleRes.rows[0].id]
+          );
+        }
       }
 
       if (data.branch_id !== undefined) {

@@ -8,10 +8,12 @@ export class TenantService {
     let branchId = tenant ? tenant.branch_id : null;
     let bookingId = tenant ? tenant.booking_id : null;
 
-    // 2. If no tenant row or no branchId, look in bookings
+    // 2. If no active tenant, look in active/pending/confirmed bookings only
     if (!branchId) {
       const bRes = await queryNamed(
-        `SELECT * FROM bookings WHERE user_id = @userId ORDER BY booking_date DESC LIMIT 1`,
+        `SELECT * FROM bookings 
+         WHERE user_id = @userId AND status NOT IN ('CHECKED_OUT', 'CANCELLED', 'REJECTED') 
+         ORDER BY booking_date DESC LIMIT 1`,
         { userId }
       );
       if (bRes.rows.length > 0) {
@@ -21,7 +23,22 @@ export class TenantService {
     }
 
     if (!branchId && !bookingId) {
-      return { activeTenant: null, registeredProperty: null, summary: {} };
+      const payments = await queryNamed('SELECT * FROM payments WHERE user_id = @userId ORDER BY created_at DESC LIMIT 5', { userId });
+      const invoices = await queryNamed(
+        `SELECT ri.* FROM rent_invoices ri JOIN tenants t ON ri.tenant_id = t.id WHERE t.user_id = @userId ORDER BY ri.created_at DESC LIMIT 5`,
+        { userId }
+      );
+      return { 
+        activeTenant: null, 
+        booking: null, 
+        room: null, 
+        branch: null, 
+        registeredProperty: null, 
+        summary: {},
+        recentInvoices: invoices.rows,
+        recentPayments: payments.rows,
+        notices: []
+      };
     }
 
     // Get Booking Details
@@ -36,6 +53,9 @@ export class TenantService {
         { bookingId }
       );
       booking = bkRes.rows[0] || null;
+      if (booking) {
+        booking.booking_number = booking.booking_number || `BK-${(booking.id || '').slice(0, 8).toUpperCase()}`;
+      }
       if (booking && !branchId) branchId = booking.branch_id;
     }
 
@@ -126,33 +146,112 @@ export class TenantService {
   }
 
   public static async createBooking(data: any) {
+    const bookingNumber = `BK-${Math.floor(100000 + Math.random() * 900000)}`;
     const res = await queryNamed(
-      `INSERT INTO bookings (branch_id, user_id, room_id, bed_id, status)
-       VALUES (@branch_id, @user_id, @room_id, @bed_id, 'PENDING') RETURNING *`,
+      `INSERT INTO bookings (
+         branch_id, user_id, room_id, bed_id, status, booking_status, booking_number,
+         document_url, document_type, document_number, photo_url,
+         occupation, company_name, permanent_address, city, state, pincode,
+         emergency_name, emergency_phone, emergency_relation,
+         expected_check_in_date, advance_payment_amount, payment_method, remarks
+       )
+       VALUES (
+         @branch_id, @user_id, @room_id, @bed_id, 'PENDING', 'PENDING', @booking_number,
+         @document_url, @document_type, @document_number, @photo_url,
+         @occupation, @company_name, @permanent_address, @city, @state, @pincode,
+         @emergency_name, @emergency_phone, @emergency_relation,
+         @expected_check_in_date, @advance_payment_amount, @payment_method, @remarks
+       ) RETURNING *`,
       {
         branch_id: data.branch_id,
         user_id: data.user_id,
         room_id: data.room_id,
         bed_id: data.bed_id || null,
+        booking_number: bookingNumber,
+        document_url: data.document_url || null,
+        document_type: data.document_type || null,
+        document_number: data.document_number || null,
+        photo_url: data.photo || data.photo_url || null,
+        occupation: data.occupation || null,
+        company_name: data.company_name || null,
+        permanent_address: data.permanent_address || null,
+        city: data.city || null,
+        state: data.state || null,
+        pincode: data.pincode || null,
+        emergency_name: data.emergency_name || null,
+        emergency_phone: data.emergency_phone || null,
+        emergency_relation: data.emergency_relation || null,
+        expected_check_in_date: data.expected_check_in_date || null,
+        advance_payment_amount: data.advance_payment_amount || 0,
+        payment_method: data.payment_method || null,
+        remarks: data.remarks || null,
       }
     );
+
+    const booking = res.rows[0];
+
+    if (booking && data.document_url) {
+      try {
+        await queryNamed(
+          `INSERT INTO documents (entity_type, entity_id, document_type, document_url)
+           VALUES ('BOOKING', @entity_id, @document_type, @document_url)`,
+          {
+            entity_id: booking.id,
+            document_type: data.document_type || 'ID_PROOF',
+            document_url: data.document_url,
+          }
+        );
+      } catch (docErr) {
+        console.warn('Could not insert booking document into documents table:', docErr);
+      }
+    }
+
     if (data.bed_id) {
       await queryNamed("UPDATE beds SET status = 'RESERVED' WHERE id = @bed_id", { bed_id: data.bed_id });
     }
-    return res.rows[0];
+    return booking;
   }
 
   public static async getBookings(userId: string) {
     const res = await queryNamed(
-      `SELECT b.*, r.room_number, r.room_type, r.monthly_rent, r.security_deposit, br.name as branch_name, bd.bed_number
+      `SELECT 
+         b.*, 
+         r.room_number, 
+         r.room_type, 
+         r.monthly_rent, 
+         r.security_deposit, 
+         br.name as branch_name, 
+         p.name as property_name,
+         bd.bed_number,
+         pay.status as latest_payment_status
        FROM bookings b
        JOIN rooms r ON b.room_id = r.id
        JOIN branches br ON b.branch_id = br.id
+       LEFT JOIN properties p ON br.property_id = p.id
        LEFT JOIN beds bd ON b.bed_id = bd.id
-       WHERE b.user_id = @userId ORDER BY b.booking_date DESC`,
+       LEFT JOIN LATERAL (
+         SELECT status FROM payments WHERE booking_id = b.id ORDER BY created_at DESC LIMIT 1
+       ) pay ON true
+       WHERE b.user_id = @userId 
+       ORDER BY b.booking_date DESC`,
       { userId }
     );
-    return res.rows;
+
+    return res.rows.map((b: any) => {
+      const isPaid = b.status === 'PAID' || b.status === 'CHECKED_IN' || b.status === 'CHECKED_OUT' || b.latest_payment_status === 'SUCCESS' || b.latest_payment_status === 'COMPLETED';
+      const isPendingVerif = !isPaid && b.latest_payment_status === 'PENDING_VERIFICATION';
+      
+      const payment_status = isPaid 
+        ? 'PAID' 
+        : (isPendingVerif ? 'PENDING_VERIFICATION' : 'UNPAID');
+
+      return {
+        ...b,
+        booking_number: b.booking_number || `BK-${(b.id || '').slice(0, 8).toUpperCase()}`,
+        payment_status,
+        display_status: b.status === 'PAID' ? 'CONFIRMED' : b.status,
+      };
+    });
   }
 
   public static async submitManualPayment(data: any) {

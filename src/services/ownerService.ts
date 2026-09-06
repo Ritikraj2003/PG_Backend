@@ -3,7 +3,7 @@ import { hashPassword } from '../utils/password';
 
 export class OwnerService {
   // DASHBOARD
-  public static async getDashboardData(ownerId: string, targetBranchId?: string) {
+  public static async getDashboardData(ownerId: string, targetBranchId?: string, userBranchId?: string) {
     const propRes = await queryNamed('SELECT id, name, description FROM properties WHERE owner_id = @ownerId', { ownerId });
     if (propRes.rows.length === 0) return { property: null, branches: [], summary: {} };
     const property = propRes.rows[0];
@@ -29,7 +29,13 @@ export class OwnerService {
        ORDER BY b.created_at ASC`,
       { propertyId: property.id }
     );
-    const allBranchIds = branchesRes.rows.map(b => b.id);
+
+    let allBranches = branchesRes.rows;
+    if (userBranchId) {
+      allBranches = allBranches.filter(b => b.id === userBranchId);
+    }
+
+    const allBranchIds = allBranches.map(b => b.id);
 
     if (allBranchIds.length === 0) {
       return {
@@ -40,11 +46,11 @@ export class OwnerService {
       };
     }
 
-    let activeBranchId = targetBranchId;
+    let activeBranchId = userBranchId || targetBranchId;
     if (!activeBranchId || !allBranchIds.includes(activeBranchId)) {
       activeBranchId = allBranchIds[0];
     }
-    const activeBranch = branchesRes.rows.find(b => b.id === activeBranchId);
+    const activeBranch = allBranches.find(b => b.id === activeBranchId) || allBranches[0];
 
     const subscription = activeBranch ? {
       id: activeBranch.subscription_id,
@@ -68,11 +74,11 @@ export class OwnerService {
     return {
       property,
       branch: activeBranch,
-      branches: branchesRes.rows,
+      branches: allBranches,
       selectedBranchId: activeBranchId,
       subscription,
       summary: {
-        totalBranches: branchesRes.rows.length,
+        totalBranches: allBranches.length,
         totalRooms: parseInt(roomsRes.rows[0].count),
         totalBeds: parseInt(bedsRes.rows[0].count),
         occupiedBeds: parseInt(bedsRes.rows[0].occupied),
@@ -202,7 +208,7 @@ export class OwnerService {
     };
   }
 
-  public static async getOwnerBranches(ownerId: string) {
+  public static async getOwnerBranches(ownerId: string, userBranchId?: string) {
     const res = await queryNamed(
       `SELECT b.*, b.name as branch_name,
               s.id as subscription_id, s.plan_id, s.plan_name, s.duration_months, s.start_date, s.end_date, s.price as subscription_price,
@@ -225,6 +231,9 @@ export class OwnerService {
        ORDER BY b.created_at DESC`,
       { ownerId }
     );
+    if (userBranchId) {
+      return res.rows.filter(b => b.id === userBranchId);
+    }
     return res.rows;
   }
 
@@ -359,7 +368,8 @@ export class OwnerService {
 
   public static async getBookings(branchId: string) {
     const res = await queryNamed(
-      `SELECT b.*, u.full_name, u.email, u.mobile_number, r.room_number, r.room_type, r.monthly_rent, r.security_deposit, bd.bed_number
+      `SELECT b.*, u.full_name, u.full_name as tenant_name, u.email as tenant_email, u.mobile_number, 
+              r.room_number, r.room_type, r.monthly_rent, r.security_deposit, bd.bed_number
        FROM bookings b
        JOIN users u ON b.user_id = u.id
        JOIN rooms r ON b.room_id = r.id
@@ -367,7 +377,35 @@ export class OwnerService {
        WHERE b.branch_id = @branchId ORDER BY b.booking_date DESC`,
       { branchId }
     );
-    return res.rows;
+    return res.rows.map((b: any) => ({
+      ...b,
+      booking_number: b.booking_number || `BK-${(b.id || '').slice(0, 8).toUpperCase()}`,
+      booking_status: b.booking_status || b.status,
+      tenant_name: b.tenant_name || b.full_name || 'Tenant',
+      tenant_photo: b.photo_url || b.photo || null,
+      tenant_documents: b.document_url ? [
+        {
+          id: b.id,
+          document_type: b.document_type || 'ID Proof',
+          document_number: b.document_number || 'Attached',
+          document_url: b.document_url,
+        }
+      ] : [],
+      emergency_contacts: b.emergency_name ? [
+        {
+          id: b.id,
+          name: b.emergency_name,
+          relation: b.emergency_relation || 'Emergency Contact',
+          phone: b.emergency_phone || 'N/A',
+        }
+      ] : [],
+      permanent_address: b.permanent_address || null,
+      tenant_city: b.city || null,
+      tenant_state: b.state || null,
+      tenant_pincode: b.pincode || null,
+      occupation: b.occupation || null,
+      company_name: b.company_name || null,
+    }));
   }
 
   public static async updateBookingStatus(bookingId: string, status: string, remarks?: string, refundAmount?: number) {
@@ -380,21 +418,85 @@ export class OwnerService {
 
       if (status === 'APPROVED' && booking.status === 'PENDING') {
         // Just status update
-      } else if (status === 'PAID' && booking.status === 'APPROVED') {
+      } else if (status === 'PAID' && (booking.status === 'APPROVED' || booking.status === 'PENDING')) {
         // Tenant is active now
         if (booking.bed_id) await queryNamed("UPDATE beds SET status = 'OCCUPIED' WHERE id = @bedId", { bedId: booking.bed_id }, client);
         
-        await queryNamed(
-          `INSERT INTO tenants (user_id, branch_id, booking_id, tenant_code, status)
-           VALUES (@userId, @branchId, @bookingId, @tenantCode, 'ACTIVE') ON CONFLICT DO NOTHING`,
+        const tenantRes = await queryNamed(
+          `INSERT INTO tenants (
+             user_id, branch_id, booking_id, tenant_code, status,
+             occupation, company_name, emergency_contact_name, emergency_contact_phone,
+             emergency_contact_relation, permanent_address, city, state, pincode, photo_url
+           )
+           VALUES (
+             @userId, @branchId, @bookingId, @tenantCode, 'ACTIVE',
+             @occupation, @company_name, @emergency_name, @emergency_phone,
+             @emergency_relation, @permanent_address, @city, @state, @pincode, @photo_url
+           ) ON CONFLICT DO NOTHING RETURNING *`,
           {
             userId: booking.user_id,
             branchId: booking.branch_id,
             bookingId: booking.id,
             tenantCode: `TNT-${Math.floor(1000 + Math.random() * 9000)}`,
+            occupation: booking.occupation || null,
+            company_name: booking.company_name || null,
+            emergency_name: booking.emergency_name || null,
+            emergency_phone: booking.emergency_phone || null,
+            emergency_relation: booking.emergency_relation || null,
+            permanent_address: booking.permanent_address || null,
+            city: booking.city || null,
+            state: booking.state || null,
+            pincode: booking.pincode || null,
+            photo_url: booking.photo_url || null,
           },
           client
         );
+
+        const tenant = tenantRes.rows[0];
+        if (tenant) {
+          if (booking.document_url) {
+            try {
+              await queryNamed(
+                `INSERT INTO documents (entity_type, entity_id, document_type, document_url)
+                 VALUES ('TENANT', @entity_id, @document_type, @document_url)`,
+                {
+                  entity_id: tenant.id,
+                  document_type: booking.document_type || 'ID_PROOF',
+                  document_url: booking.document_url,
+                },
+                client
+              );
+            } catch (docErr) {
+              console.warn('Could not copy booking document to tenant:', docErr);
+            }
+          }
+
+          // Ensure Initial Rent & Deposit invoice is created with proper room rent and deposit
+          try {
+            const existingInv = await queryNamed('SELECT id FROM rent_invoices WHERE tenant_id = @tenantId LIMIT 1', { tenantId: tenant.id }, client);
+            if (existingInv.rows.length === 0) {
+              const rRes = await queryNamed('SELECT monthly_rent, security_deposit FROM rooms WHERE id = @roomId', { roomId: booking.room_id }, client);
+              const room = rRes.rows[0];
+              const rent = Number(room?.monthly_rent || 0);
+              const deposit = Number(room?.security_deposit || 0);
+              const total = rent + deposit;
+              await queryNamed(
+                `INSERT INTO rent_invoices (branch_id, tenant_id, invoice_month, due_date, rent_amount, maintenance_amount, total_amount, status)
+                 VALUES (@branchId, @tenantId, 'Initial Rent & Deposit', CURRENT_DATE, @rent, @deposit, @total, 'PAID')`,
+                {
+                  branchId: booking.branch_id,
+                  tenantId: tenant.id,
+                  rent,
+                  deposit,
+                  total,
+                },
+                client
+              );
+            }
+          } catch (invErr) {
+            console.warn('Could not auto-create rent invoice in updateBookingStatus:', invErr);
+          }
+        }
       } else if (status === 'CHECKED_OUT') {
         if (booking.bed_id) await queryNamed("UPDATE beds SET status = 'AVAILABLE' WHERE id = @bedId", { bedId: booking.bed_id }, client);
         await queryNamed("UPDATE tenants SET status = 'CHECKED_OUT' WHERE booking_id = @bookingId", { bookingId: booking.id }, client);
@@ -403,8 +505,14 @@ export class OwnerService {
         if (booking.bed_id) await queryNamed("UPDATE beds SET status = 'AVAILABLE' WHERE id = @bedId", { bedId: booking.bed_id }, client);
       }
 
+      let updateSql = `UPDATE bookings SET status = @status, booking_status = @status, checkout_remarks = COALESCE(@remarks, checkout_remarks), updated_at = NOW()`;
+      if (status === 'PAID' || status === 'CHECKED_IN') {
+        updateSql += `, check_in_date = COALESCE(check_in_date, expected_check_in_date, CURRENT_DATE)`;
+      }
+      updateSql += ` WHERE id = @bookingId RETURNING *`;
+
       const res = await queryNamed(
-        `UPDATE bookings SET status = @status, checkout_remarks = COALESCE(@remarks, checkout_remarks), updated_at = NOW() WHERE id = @bookingId RETURNING *`,
+        updateSql,
         { status, remarks: remarks || null, bookingId },
         client
       );

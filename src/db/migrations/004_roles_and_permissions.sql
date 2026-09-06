@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS public.permissions (
 CREATE TABLE IF NOT EXISTS public.role_permission_mapping (
   role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
   permission_id BIGINT NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
+  branch_id UUID REFERENCES branches(id) ON DELETE CASCADE,
   created_by VARCHAR(100),
   created_on TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   last_modified_by VARCHAR(100),
@@ -21,8 +22,11 @@ CREATE TABLE IF NOT EXISTS public.role_permission_mapping (
   PRIMARY KEY (role_id, permission_id)
 );
 
+ALTER TABLE public.role_permission_mapping ADD COLUMN IF NOT EXISTS branch_id UUID REFERENCES public.branches(id) ON DELETE CASCADE;
+
 -- Update roles table to allow company owners to define custom roles
 ALTER TABLE roles ADD COLUMN IF NOT EXISTS owner_id UUID REFERENCES users(id) ON DELETE CASCADE;
+ALTER TABLE roles ADD COLUMN IF NOT EXISTS branch_id UUID REFERENCES public.branches(id) ON DELETE CASCADE;
 ALTER TABLE roles ADD COLUMN IF NOT EXISTS created_by VARCHAR(100);
 ALTER TABLE roles ADD COLUMN IF NOT EXISTS created_on TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
 ALTER TABLE roles ADD COLUMN IF NOT EXISTS last_modified_by VARCHAR(100);

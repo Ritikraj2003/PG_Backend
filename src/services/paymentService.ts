@@ -199,9 +199,14 @@ export class PaymentService {
         client
       );
 
-      // Confirm booking and create tenant
+      // Confirm booking and set check_in_date at payment time
       await queryNamed(
-        `UPDATE bookings SET status = 'PAID', updated_at = NOW() WHERE id = @bookingId`,
+        `UPDATE bookings 
+         SET status = 'PAID', 
+             booking_status = 'PAID',
+             check_in_date = COALESCE(check_in_date, expected_check_in_date, CURRENT_DATE), 
+             updated_at = NOW() 
+         WHERE id = @bookingId`,
         { bookingId: data.booking_id },
         client
       );
@@ -235,9 +240,13 @@ export class PaymentService {
       }
 
       if (tenant) {
-        const rent = Number(booking.monthly_rent) || 0;
-        const deposit = Number(booking.security_deposit) || 0;
-        const total = rent + deposit || data.amount;
+        // Fetch room rent and security deposit from rooms table
+        const rRes = await queryNamed('SELECT monthly_rent, security_deposit FROM rooms WHERE id = @roomId', { roomId: booking.room_id }, client);
+        const room = rRes.rows[0];
+
+        const rent = Number(room?.monthly_rent || booking.monthly_rent || 0);
+        const deposit = Number(room?.security_deposit || booking.security_deposit || 0);
+        const total = (rent + deposit > 0) ? (rent + deposit) : Number(data.amount || 0);
 
         const invRes = await queryNamed(
           `INSERT INTO rent_invoices (branch_id, tenant_id, invoice_month, due_date, rent_amount, maintenance_amount, total_amount, status)

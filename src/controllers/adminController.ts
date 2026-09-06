@@ -1,12 +1,31 @@
 import { Request, Response } from 'express';
 import { AdminService } from '../services/adminService';
+import { StorageService } from '../services/storageService';
 import { sendSuccess, sendError } from '../utils/response';
 
 export class AdminController {
   // COMPANY ADMINS (Previously Owners)
   public static async createOwner(req: Request, res: Response) {
     try {
-      const admin = await AdminService.createCompanyAdmin(req.body);
+      const data = { ...req.body };
+      if (req.files) {
+        const files = req.files as { [fieldname: string]: Express.Multer.File[] };
+        if (files['logo'] && files['logo'][0]) {
+          data.logo_url = await StorageService.uploadFile(files['logo'][0].path, 'pg_logos');
+          try {
+            const fs = require('fs');
+            if (fs.existsSync(files['logo'][0].path)) fs.unlinkSync(files['logo'][0].path);
+          } catch (e) {}
+        }
+        if (files['kyc_doc'] && files['kyc_doc'][0]) {
+          data.kyc_doc_url = await StorageService.uploadFile(files['kyc_doc'][0].path, 'pg_kyc');
+          try {
+            const fs = require('fs');
+            if (fs.existsSync(files['kyc_doc'][0].path)) fs.unlinkSync(files['kyc_doc'][0].path);
+          } catch (e) {}
+        }
+      }
+      const admin = await AdminService.createCompanyAdmin(data);
       return sendSuccess(res, admin, 'Company Admin created successfully', 201);
     } catch (err: any) {
       return sendError(res, err.message, 400);
@@ -149,7 +168,11 @@ export class AdminController {
     try {
       let upi_qr_url = req.body.upi_qr_url;
       if (req.file) {
-        upi_qr_url = `/uploads/${req.file.filename}`;
+        upi_qr_url = await StorageService.uploadFile(req.file.path, 'pg_admin_qr');
+        try {
+          const fs = require('fs');
+          if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+        } catch (e) {}
       }
       const data = { ...req.body, upi_qr_url };
       const settings = await AdminService.updateGeneralSettings(data);

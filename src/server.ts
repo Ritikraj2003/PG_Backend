@@ -58,13 +58,54 @@ const server = app.listen(PORT, async () => {
       ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50) DEFAULT 'CASH';
       ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS transaction_id VARCHAR(150);
       ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS payment_status VARCHAR(50) DEFAULT 'PAID';
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS booking_number VARCHAR(50);
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS booking_status VARCHAR(50);
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS document_url TEXT;
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS document_type VARCHAR(50);
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS document_number VARCHAR(100);
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS photo_url TEXT;
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS occupation VARCHAR(100);
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS company_name VARCHAR(150);
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS permanent_address TEXT;
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS city VARCHAR(100);
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS state VARCHAR(100);
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS pincode VARCHAR(20);
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS emergency_name VARCHAR(150);
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS emergency_phone VARCHAR(50);
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS emergency_relation VARCHAR(50);
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS expected_check_in_date DATE;
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS advance_payment_amount NUMERIC(12, 2) DEFAULT 0.00;
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50);
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS remarks TEXT;
+      ALTER TABLE tenants ADD COLUMN IF NOT EXISTS photo_url TEXT;
+      ALTER TABLE tenants ADD COLUMN IF NOT EXISTS permanent_address TEXT;
+      ALTER TABLE tenants ADD COLUMN IF NOT EXISTS city VARCHAR(100);
+      ALTER TABLE tenants ADD COLUMN IF NOT EXISTS state VARCHAR(100);
+      ALTER TABLE tenants ADD COLUMN IF NOT EXISTS pincode VARCHAR(20);
+      ALTER TABLE tenants ADD COLUMN IF NOT EXISTS emergency_contact_relation VARCHAR(50);
+      ALTER TABLE complaints ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE CASCADE;
+      ALTER TABLE complaints ADD COLUMN IF NOT EXISTS room_id UUID REFERENCES rooms(id) ON DELETE SET NULL;
     `);
 
-    const migration004 = path.join(__dirname, 'db', 'migrations', '004_roles_and_permissions.sql');
-    if (fs.existsSync(migration004)) {
-      const sql004 = fs.readFileSync(migration004, 'utf8');
-      await pool.query(sql004);
+    const migrationPaths = [
+      path.join(__dirname, 'db', 'migrations', '004_roles_and_permissions.sql'),
+      path.join(process.cwd(), 'src', 'db', 'migrations', '004_roles_and_permissions.sql'),
+      path.join(process.cwd(), 'backend', 'src', 'db', 'migrations', '004_roles_and_permissions.sql'),
+      path.join(__dirname, '..', 'src', 'db', 'migrations', '004_roles_and_permissions.sql'),
+    ];
+    for (const mPath of migrationPaths) {
+      if (fs.existsSync(mPath)) {
+        const sql004 = fs.readFileSync(mPath, 'utf8');
+        await pool.query(sql004);
+        break;
+      }
     }
+
+    // Ensure branch_id is present in role_permission_mapping and roles tables
+    await pool.query(`
+      ALTER TABLE public.role_permission_mapping ADD COLUMN IF NOT EXISTS branch_id UUID REFERENCES public.branches(id) ON DELETE CASCADE;
+      ALTER TABLE public.roles ADD COLUMN IF NOT EXISTS branch_id UUID REFERENCES public.branches(id) ON DELETE CASCADE;
+    `);
   } catch (err) {
     console.warn(`⚠️ Warning: Database connection failed. Please verify DATABASE_URL in .env:`, err);
   }

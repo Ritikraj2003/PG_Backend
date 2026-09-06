@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { TenantService } from '../services/tenantService';
+import { StorageService } from '../services/storageService';
 import { sendSuccess, sendError } from '../utils/response';
 
 export class TenantController {
@@ -36,7 +37,11 @@ export class TenantController {
     try {
       let screenshot_url = req.body.screenshot_url;
       if (req.file) {
-        screenshot_url = `/uploads/${req.file.filename}`;
+        screenshot_url = await StorageService.uploadFile(req.file.path, 'pg_payments');
+        try {
+          const fs = require('fs');
+          if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+        } catch (e) {}
       }
       if (!screenshot_url) {
         return sendError(res, 'Payment screenshot is required', 400);
