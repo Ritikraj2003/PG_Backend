@@ -5,11 +5,18 @@ import pool from './database';
 async function runMigrations() {
   console.log('Running Database Migrations...');
   try {
-    const migrationFile = path.join(__dirname, 'migrations', '001_initial_schema.sql');
-    const sql = fs.readFileSync(migrationFile, 'utf8');
+    const migrationsDir = path.join(__dirname, 'migrations');
+    const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
 
-    await pool.query(sql);
-    console.log('✅ Migrations executed successfully!');
+    for (const file of files) {
+      console.log(`Executing migration: ${file}...`);
+      const filePath = path.join(migrationsDir, file);
+      const sql = fs.readFileSync(filePath, 'utf8');
+      await pool.query(sql);
+      console.log(`  ✓ ${file} executed successfully`);
+    }
+
+    console.log('✅ All migrations executed successfully!');
   } catch (error) {
     console.error('❌ Migration failed:', error);
   } finally {

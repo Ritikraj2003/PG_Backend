@@ -65,4 +65,56 @@ export class PublicController {
       return sendError(res, err.message, 404);
     }
   }
+
+  public static async getNearbyPGs(req: Request, res: Response) {
+    try {
+      const {
+        lat,
+        lng,
+        radius,
+        search,
+        gender,
+        min_rent,
+        max_rent,
+        room_type,
+        food,
+        ac,
+        sort_by,
+      } = req.query;
+
+      const options = {
+        lat: lat !== undefined ? parseFloat(lat as string) : undefined,
+        lng: lng !== undefined ? parseFloat(lng as string) : undefined,
+        radius: radius !== undefined ? parseFloat(radius as string) : 40,
+        search: search as string | undefined,
+        gender: gender as string | undefined,
+        min_rent: min_rent !== undefined ? parseFloat(min_rent as string) : undefined,
+        max_rent: max_rent !== undefined ? parseFloat(max_rent as string) : undefined,
+        room_type: room_type as string | undefined,
+        food: food !== undefined ? food === 'true' || food === '1' : undefined,
+        ac: ac !== undefined ? ac === 'true' || ac === '1' : undefined,
+        sort_by: sort_by as string | undefined,
+      };
+
+      const pgs = await PublicService.getNearbyPGs(options);
+      return sendSuccess(res, pgs, 'Nearby PGs retrieved successfully');
+    } catch (err: any) {
+      return sendError(res, err.message, 500);
+    }
+  }
+
+  public static async getPGById(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      const { lat, lng } = req.query;
+      const userLat = lat !== undefined ? parseFloat(lat as string) : undefined;
+      const userLng = lng !== undefined ? parseFloat(lng as string) : undefined;
+
+      const pg = await PublicService.getPGById(id, userLat, userLng);
+      return sendSuccess(res, pg, 'PG details retrieved successfully');
+    } catch (err: any) {
+      return sendError(res, err.message, 404);
+    }
+  }
 }
+

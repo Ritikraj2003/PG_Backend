@@ -349,9 +349,18 @@ export class AdminService {
       }
 
       const amenitiesJson = JSON.stringify(data.amenities || []);
+      const imagesJson = JSON.stringify(data.images || []);
       const branchRes = await queryNamed(
-        `INSERT INTO branches (property_id, name, address, city, state, contact_number, amenities)
-         VALUES (@propertyId, @name, @address, @city, @state, @contactNumber, @amenities::jsonb) RETURNING *`,
+        `INSERT INTO branches (
+           property_id, name, address, city, state, contact_number, amenities,
+           latitude, longitude, district, pg_type, starting_monthly_rent,
+           food_available, ac_available, cover_image, images, description
+         )
+         VALUES (
+           @propertyId, @name, @address, @city, @state, @contactNumber, @amenities::jsonb,
+           @latitude, @longitude, @district, @pgType, @startingMonthlyRent,
+           @foodAvailable, @acAvailable, @coverImage, @images::jsonb, @description
+         ) RETURNING *`,
         {
           propertyId: data.property_id,
           name: data.name || data.branch_name,
@@ -360,6 +369,16 @@ export class AdminService {
           state: data.state || null,
           contactNumber: data.contact_number || null,
           amenities: amenitiesJson,
+          latitude: data.latitude !== undefined && data.latitude !== '' ? parseFloat(data.latitude) : 12.9352,
+          longitude: data.longitude !== undefined && data.longitude !== '' ? parseFloat(data.longitude) : 77.6245,
+          district: data.district || null,
+          pgType: data.pg_type || 'UNISEX',
+          startingMonthlyRent: parseFloat(data.starting_monthly_rent || 0),
+          foodAvailable: data.food_available !== undefined ? Boolean(data.food_available) : true,
+          acAvailable: data.ac_available !== undefined ? Boolean(data.ac_available) : false,
+          coverImage: data.cover_image || null,
+          images: imagesJson,
+          description: data.description || null,
         },
         client
       );
@@ -552,8 +571,39 @@ export class AdminService {
 
   public static async updateBranch(id: string, data: any) {
     const res = await queryNamed(
-      `UPDATE branches SET name = COALESCE(@name, name), address = COALESCE(@address, address), contact_number = COALESCE(@contact, contact_number) WHERE id = @id RETURNING *`,
-      { name: data.name || data.branch_name || null, address: data.address || null, contact: data.contact_number || null, id }
+      `UPDATE branches SET 
+         name = COALESCE(@name, name), 
+         address = COALESCE(@address, address), 
+         city = COALESCE(@city, city),
+         state = COALESCE(@state, state),
+         district = COALESCE(@district, district),
+         contact_number = COALESCE(@contact, contact_number),
+         latitude = COALESCE(@latitude, latitude),
+         longitude = COALESCE(@longitude, longitude),
+         pg_type = COALESCE(@pgType, pg_type),
+         starting_monthly_rent = COALESCE(@startingRent, starting_monthly_rent),
+         food_available = COALESCE(@foodAvailable, food_available),
+         ac_available = COALESCE(@acAvailable, ac_available),
+         cover_image = COALESCE(@coverImage, cover_image),
+         description = COALESCE(@description, description)
+       WHERE id = @id RETURNING *`,
+      { 
+        name: data.name || data.branch_name || null, 
+        address: data.address || null, 
+        city: data.city || null,
+        state: data.state || null,
+        district: data.district || null,
+        contact: data.contact_number || null,
+        latitude: data.latitude !== undefined && data.latitude !== '' ? parseFloat(data.latitude) : null,
+        longitude: data.longitude !== undefined && data.longitude !== '' ? parseFloat(data.longitude) : null,
+        pgType: data.pg_type || null,
+        startingRent: data.starting_monthly_rent !== undefined ? parseFloat(data.starting_monthly_rent) : null,
+        foodAvailable: data.food_available !== undefined ? Boolean(data.food_available) : null,
+        acAvailable: data.ac_available !== undefined ? Boolean(data.ac_available) : null,
+        coverImage: data.cover_image || null,
+        description: data.description || null,
+        id 
+      }
     );
     return res.rows[0];
   }
