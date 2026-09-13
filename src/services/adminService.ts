@@ -34,15 +34,31 @@ export class AdminService {
           propertyId = propRes.rows[0].id;
           const branchName = data.branch_name || `${data.property_name} - Main`;
           const branchRes = await queryNamed(
-            `INSERT INTO branches (property_id, name, address, city, state, contact_number, amenities)
-             VALUES (@propertyId, @name, @address, @city, @state, @contactNumber, '[]'::jsonb) RETURNING id`,
+            `INSERT INTO branches (
+               property_id, name, address, city, state, district, contact_number,
+               latitude, longitude, pg_type, starting_monthly_rent, food_available,
+               ac_available, description, amenities
+             )
+             VALUES (
+               @propertyId, @name, @address, @city, @state, @district, @contactNumber,
+               @latitude, @longitude, @pgType, @startingMonthlyRent, @foodAvailable,
+               @acAvailable, @description, '[]'::jsonb
+             ) RETURNING id`,
             {
               propertyId,
               name: branchName,
               address: data.address || data.city || 'Main Address',
               city: data.city || 'Bengaluru',
               state: data.state || 'Karnataka',
+              district: data.district || null,
               contactNumber: data.contact_number || data.mobile_number || null,
+              latitude: data.latitude ? parseFloat(data.latitude) : null,
+              longitude: data.longitude ? parseFloat(data.longitude) : null,
+              pgType: data.pg_type || 'UNISEX',
+              startingMonthlyRent: parseFloat(data.starting_monthly_rent || 0),
+              foodAvailable: data.food_available !== undefined ? (data.food_available === true || data.food_available === 'true') : true,
+              acAvailable: data.ac_available !== undefined ? (data.ac_available === true || data.ac_available === 'true') : false,
+              description: data.description || null,
             },
             client
           );
@@ -129,6 +145,22 @@ export class AdminService {
         ).catch(e => console.warn('Could not record initial subscription payment:', e));
       }
 
+      if (branchId) {
+        await queryNamed(
+          `UPDATE branches 
+           SET subscription_status = 'ACTIVE',
+               subscription_end_date = @endDate,
+               plan_name = @planName
+           WHERE id = @branchId`,
+          {
+            endDate: endDate.toISOString(),
+            planName,
+            branchId,
+          },
+          client
+        );
+      }
+
       await client.query('COMMIT');
       return {
         id: userId,
@@ -198,16 +230,49 @@ export class AdminService {
   }
 
   public static async renewOwnerSubscription(ownerId: string, data: any) {
-    const durationMonths = parseInt(data.duration_months) || 2;
-    const planName = data.plan_name || (
+    const propRes = await queryNamed(`SELECT id FROM properties WHERE owner_id = @ownerId LIMIT 1`, { ownerId });
+    if (propRes.rows.length === 0) throw new Error('Property not found for this owner');
+    const propertyId = propRes.rows[0].id;
+
+    // Fetch all branches under this property
+    const branchesRes = await queryNamed(
+      `SELECT * FROM branches WHERE property_id = @propertyId ORDER BY created_at ASC`,
+      { propertyId }
+    );
+    const allBranches = branchesRes.rows;
+
+    let planId: string | null = data.plan_id || null;
+    let durationMonths = parseInt(data.duration_months || data.subscription_months) || 2;
+    let planName = data.plan_name || (
       durationMonths === 12 ? 'Annual (12 Months)' :
       durationMonths === 6 ? 'Half-Yearly (6 Months)' :
       durationMonths === 3 ? 'Quarterly (3 Months)' :
-      'Starter (2 Months)'
+      'Starter Plan (2 Months)'
     );
+    let planPrice = parseFloat(data.price || data.subscription_price || 0);
+    let maxBranches = 1;
 
-    const propRes = await queryNamed(`SELECT id FROM properties WHERE owner_id = @ownerId LIMIT 1`, { ownerId });
-    const propertyId = propRes.rows.length > 0 ? propRes.rows[0].id : null;
+    if (planId) {
+      const pRes = await queryNamed(`SELECT * FROM subscription_plans WHERE id = @planId`, { planId });
+      if (pRes.rows.length > 0) {
+        const p = pRes.rows[0];
+        durationMonths = p.duration_months;
+        planName = p.name;
+        planPrice = parseFloat(p.price);
+        maxBranches = p.max_branches;
+      }
+    } else {
+      const pRes = await queryNamed(
+        `SELECT * FROM subscription_plans WHERE duration_months = @durationMonths AND is_active = TRUE LIMIT 1`,
+        { durationMonths }
+      );
+      if (pRes.rows.length > 0) {
+        planId = pRes.rows[0].id;
+        planName = pRes.rows[0].name;
+        planPrice = parseFloat(pRes.rows[0].price);
+        maxBranches = pRes.rows[0].max_branches;
+      }
+    }
 
     const latestSubRes = await queryNamed(
       `SELECT * FROM subscriptions WHERE owner_id = @ownerId ORDER BY created_at DESC LIMIT 1`,
@@ -226,20 +291,109 @@ export class AdminService {
     const endDate = new Date(startDate);
     endDate.setMonth(endDate.getMonth() + durationMonths);
 
+    const paymentMethod = data.payment_mode || data.payment_method || 'CASH';
+    const paymentStatus = data.payment_status || 'PAID';
+    const transactionId = data.payment_ref || data.transaction_id || `txn_${Date.now()}`;
+
+    // Handle Downgrade / Branch Quota Logic
+    const selectedBranchIds: string[] = Array.isArray(data.selected_branch_ids) ? data.selected_branch_ids : [];
+
+    let activeBranchIds: string[] = [];
+    let pausedBranchIds: string[] = [];
+
+    if (selectedBranchIds.length > 0) {
+      // User specified which branches to keep active (capped at maxBranches)
+      activeBranchIds = selectedBranchIds.slice(0, maxBranches);
+      pausedBranchIds = allBranches
+        .map(b => b.id)
+        .filter(id => !activeBranchIds.includes(id));
+    } else if (allBranches.length > maxBranches) {
+      // Automatic downgrade fallback if not explicitly chosen: keep first maxBranches, pause rest
+      activeBranchIds = allBranches.slice(0, maxBranches).map(b => b.id);
+      pausedBranchIds = allBranches.slice(maxBranches).map(b => b.id);
+    } else {
+      // All branches fit under plan quota
+      activeBranchIds = allBranches.map(b => b.id);
+      pausedBranchIds = [];
+    }
+
+    // Update active branches
+    if (activeBranchIds.length > 0) {
+      for (const bId of activeBranchIds) {
+        await queryNamed(
+          `UPDATE branches 
+           SET is_active = TRUE,
+               subscription_status = 'ACTIVE',
+               subscription_end_date = @endDate,
+               plan_name = @planName
+           WHERE id = @bId`,
+          {
+            endDate: endDate.toISOString(),
+            planName,
+            bId,
+          }
+        );
+      }
+    }
+
+    // Update paused branches (downgraded)
+    if (pausedBranchIds.length > 0) {
+      for (const bId of pausedBranchIds) {
+        await queryNamed(
+          `UPDATE branches 
+           SET is_active = FALSE,
+               subscription_status = 'PAUSED'
+           WHERE id = @bId`,
+          { bId }
+        );
+      }
+    }
+
+    // Insert new subscription record
     const newSub = await queryNamed(
-      `INSERT INTO subscriptions (owner_id, property_id, plan_name, duration_months, start_date, end_date, status, price)
-       VALUES (@ownerId, @propertyId, @planName, @durationMonths, @startDate, @endDate, 'ACTIVE', @price)
+      `INSERT INTO subscriptions (
+         owner_id, property_id, plan_id, plan_name, duration_months, max_branches,
+         start_date, end_date, status, price, payment_method, transaction_id, payment_status
+       )
+       VALUES (
+         @ownerId, @propertyId, @planId, @planName, @durationMonths, @maxBranches,
+         @startDate, @endDate, 'ACTIVE', @price, @paymentMethod, @transactionId, @paymentStatus
+       )
        RETURNING *`,
       {
         ownerId,
         propertyId,
+        planId,
         planName,
         durationMonths,
+        maxBranches,
         startDate: startDate.toISOString(),
         endDate: endDate.toISOString(),
-        price: data.price || 0,
+        price: planPrice,
+        paymentMethod,
+        transactionId,
+        paymentStatus,
       }
     );
+
+    // Record renewal payment for Total Revenue
+    if (planPrice > 0) {
+      const firstBranchId = activeBranchIds[0] || (allBranches.length > 0 ? allBranches[0].id : null);
+      await queryNamed(
+        `INSERT INTO payments (branch_id, user_id, amount, payment_method, transaction_id, status, remarks)
+         VALUES (@branchId, @userId, @amount, @paymentMethod, @transactionId, @status, @remarks)`,
+        {
+          branchId: firstBranchId,
+          userId: ownerId,
+          amount: planPrice,
+          paymentMethod,
+          transactionId,
+          status: paymentStatus === 'PAID' ? 'COMPLETED' : 'PENDING',
+          remarks: `Owner Renewal: ${planName}`,
+        }
+      ).catch(e => console.warn('Could not record owner renewal payment:', e));
+    }
+
     return newSub.rows[0];
   }
 
@@ -354,12 +508,14 @@ export class AdminService {
         `INSERT INTO branches (
            property_id, name, address, city, state, contact_number, amenities,
            latitude, longitude, district, pg_type, starting_monthly_rent,
-           food_available, ac_available, cover_image, images, description
+           food_available, ac_available, cover_image, images, description,
+           subscription_status, subscription_end_date, plan_name
          )
          VALUES (
            @propertyId, @name, @address, @city, @state, @contactNumber, @amenities::jsonb,
            @latitude, @longitude, @district, @pgType, @startingMonthlyRent,
-           @foodAvailable, @acAvailable, @coverImage, @images::jsonb, @description
+           @foodAvailable, @acAvailable, @coverImage, @images::jsonb, @description,
+           'ACTIVE', @subscriptionEndDate, @planName
          ) RETURNING *`,
         {
           propertyId: data.property_id,
@@ -379,6 +535,8 @@ export class AdminService {
           coverImage: data.cover_image || null,
           images: imagesJson,
           description: data.description || null,
+          subscriptionEndDate: endDate.toISOString(),
+          planName: planName,
         },
         client
       );
@@ -445,24 +603,33 @@ export class AdminService {
   public static async listBranches() {
     const res = await queryNamed(
       `SELECT b.*, b.name as branch_name, p.name as property_name, u.full_name as owner_name, u.id as owner_id,
-              s.id as subscription_id, s.plan_id, s.plan_name, s.duration_months, s.start_date, s.end_date, s.price as plan_price,
-              CASE WHEN s.end_date IS NOT NULL AND s.end_date < CURRENT_TIMESTAMP THEN TRUE ELSE FALSE END as is_expired,
+              s.id as subscription_id, s.plan_id,
+              COALESCE(b.plan_name, s.plan_name) as plan_name,
+              s.duration_months, s.start_date,
+              COALESCE(b.subscription_end_date, s.end_date) as end_date,
+              COALESCE(b.subscription_end_date, s.end_date) as subscription_end_date,
+              s.price as plan_price,
               CASE 
-                WHEN s.end_date IS NULL THEN 0
-                WHEN s.end_date < CURRENT_TIMESTAMP THEN 0 
-                ELSE GREATEST(0, EXTRACT(DAY FROM s.end_date - CURRENT_TIMESTAMP)::INT) 
+                WHEN COALESCE(b.subscription_end_date, s.end_date) IS NOT NULL AND COALESCE(b.subscription_end_date, s.end_date) < CURRENT_TIMESTAMP THEN TRUE 
+                ELSE FALSE 
+              END as is_expired,
+              CASE 
+                WHEN COALESCE(b.subscription_end_date, s.end_date) IS NULL THEN 0
+                WHEN COALESCE(b.subscription_end_date, s.end_date) < CURRENT_TIMESTAMP THEN 0 
+                ELSE GREATEST(0, EXTRACT(DAY FROM COALESCE(b.subscription_end_date, s.end_date) - CURRENT_TIMESTAMP)::INT) 
               END as days_remaining,
               CASE 
-                WHEN s.end_date IS NULL THEN 'NO_PLAN'
-                WHEN s.end_date < CURRENT_TIMESTAMP THEN 'EXPIRED'
-                ELSE COALESCE(s.status, 'ACTIVE')
+                WHEN b.subscription_status = 'PAUSED' OR b.is_active = FALSE THEN 'PAUSED'
+                WHEN COALESCE(b.subscription_end_date, s.end_date) IS NULL THEN 'NO_PLAN'
+                WHEN COALESCE(b.subscription_end_date, s.end_date) < CURRENT_TIMESTAMP THEN 'EXPIRED'
+                ELSE COALESCE(b.subscription_status, s.status, 'ACTIVE')
               END as subscription_status
        FROM branches b
        JOIN properties p ON b.property_id = p.id
        JOIN users u ON p.owner_id = u.id
        LEFT JOIN LATERAL (
          SELECT * FROM subscriptions sub 
-         WHERE sub.branch_id = b.id 
+         WHERE sub.branch_id = b.id OR sub.property_id = p.id
          ORDER BY sub.created_at DESC 
          LIMIT 1
        ) s ON TRUE
@@ -550,6 +717,21 @@ export class AdminService {
       }
     );
 
+    // Update branch table
+    await queryNamed(
+      `UPDATE branches 
+       SET is_active = TRUE,
+           subscription_status = 'ACTIVE',
+           subscription_end_date = @endDate,
+           plan_name = @planName
+       WHERE id = @branchId`,
+      {
+        endDate: endDate.toISOString(),
+        planName,
+        branchId,
+      }
+    );
+
     if (planPrice > 0) {
       await queryNamed(
         `INSERT INTO payments (branch_id, user_id, amount, payment_method, transaction_id, status, remarks)
@@ -567,6 +749,61 @@ export class AdminService {
     }
 
     return newSub.rows[0];
+  }
+
+  public static async reactivateBranch(branchId: string) {
+    const branchRes = await queryNamed(
+      `SELECT b.*, p.owner_id FROM branches b JOIN properties p ON b.property_id = p.id WHERE b.id = @branchId`,
+      { branchId }
+    );
+    if (branchRes.rows.length === 0) throw new Error('Branch not found');
+    const branch = branchRes.rows[0];
+
+    // Find active subscription for the property/owner
+    const subRes = await queryNamed(
+      `SELECT * FROM subscriptions 
+       WHERE (branch_id = @branchId OR owner_id = @ownerId) 
+         AND status = 'ACTIVE' 
+         AND end_date > CURRENT_TIMESTAMP 
+       ORDER BY created_at DESC LIMIT 1`,
+      { branchId, ownerId: branch.owner_id }
+    );
+
+    if (subRes.rows.length === 0) {
+      throw new Error('No active subscription found for this property. Please renew the property plan first.');
+    }
+
+    const activeSub = subRes.rows[0];
+    const maxBranches = activeSub.max_branches || 1;
+
+    // Count currently active branches under this property
+    const countRes = await queryNamed(
+      `SELECT COUNT(*) as count FROM branches 
+       WHERE property_id = @propertyId AND is_active = TRUE AND subscription_status = 'ACTIVE'`,
+      { propertyId: branch.property_id }
+    );
+    const activeCount = parseInt(countRes.rows[0].count);
+
+    if (activeCount >= maxBranches) {
+      throw new Error(`Quota limit reached (${activeCount}/${maxBranches} active branches). Upgrade plan or pause another branch first.`);
+    }
+
+    const updated = await queryNamed(
+      `UPDATE branches 
+       SET is_active = TRUE,
+           subscription_status = 'ACTIVE',
+           subscription_end_date = @endDate,
+           plan_name = @planName
+       WHERE id = @branchId
+       RETURNING *`,
+      {
+        endDate: activeSub.end_date,
+        planName: activeSub.plan_name,
+        branchId,
+      }
+    );
+
+    return updated.rows[0];
   }
 
   public static async updateBranch(id: string, data: any) {
@@ -629,16 +866,55 @@ export class AdminService {
 
   // REPORTS
   public static async getGlobalReports() {
-    const totalUsers = await queryNamed('SELECT COUNT(*) FROM users', {});
-    const totalProperties = await queryNamed('SELECT COUNT(*) FROM properties', {});
-    const totalBranches = await queryNamed('SELECT COUNT(*) FROM branches', {});
-    const totalRevenue = await queryNamed("SELECT COALESCE(SUM(amount), 0) FROM payments WHERE status = 'SUCCESS'", {});
+    const totalOwners = await queryNamed(
+      `SELECT COUNT(DISTINCT u.id) as count FROM users u 
+       JOIN user_roles ur ON u.id = ur.user_id 
+       JOIN roles r ON ur.role_id = r.id 
+       WHERE r.name = 'COMPANY_ADMIN'`,
+      {}
+    );
+    const totalProperties = await queryNamed('SELECT COUNT(*) as count FROM properties', {});
+    const totalBranches = await queryNamed('SELECT COUNT(*) as count FROM branches', {});
+    const totalTenants = await queryNamed("SELECT COUNT(*) as count FROM tenants WHERE status = 'ACTIVE'", {});
+
+    const payRes = await queryNamed(
+      `SELECT COALESCE(SUM(amount), 0) as total 
+       FROM payments 
+       WHERE UPPER(status) IN ('COMPLETED', 'SUCCESS', 'PAID')`,
+      {}
+    );
+    const subRes = await queryNamed(
+      `SELECT COALESCE(SUM(price), 0) as total 
+       FROM subscriptions 
+       WHERE UPPER(payment_status) = 'PAID' OR UPPER(status) = 'ACTIVE'`,
+      {}
+    );
+
+    const payTotal = parseFloat(payRes.rows[0].total) || 0;
+    const subTotal = parseFloat(subRes.rows[0].total) || 0;
+    const totalRevenue = Math.max(payTotal, subTotal);
+
+    const recentPaymentsRes = await queryNamed(
+      `SELECT p.id, p.amount, p.payment_method, p.transaction_id, p.status, p.remarks, p.created_at,
+              u.full_name as owner_name, u.email as owner_email,
+              b.name as branch_name, prop.name as property_name
+       FROM payments p
+       LEFT JOIN users u ON p.user_id = u.id
+       LEFT JOIN branches b ON p.branch_id = b.id
+       LEFT JOIN properties prop ON b.property_id = prop.id
+       WHERE UPPER(p.status) IN ('COMPLETED', 'SUCCESS', 'PAID')
+       ORDER BY p.created_at DESC LIMIT 10`,
+      {}
+    );
 
     return {
-      totalUsers: parseInt(totalUsers.rows[0].count),
+      totalUsers: parseInt(totalOwners.rows[0].count),
+      totalOwners: parseInt(totalOwners.rows[0].count),
       totalProperties: parseInt(totalProperties.rows[0].count),
       totalBranches: parseInt(totalBranches.rows[0].count),
-      totalRevenue: parseFloat(totalRevenue.rows[0].coalesce),
+      totalTenants: parseInt(totalTenants.rows[0].count),
+      totalRevenue,
+      recentPayments: recentPaymentsRes.rows,
     };
   }
 

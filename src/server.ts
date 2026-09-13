@@ -58,6 +58,9 @@ const server = app.listen(PORT, async () => {
       ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50) DEFAULT 'CASH';
       ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS transaction_id VARCHAR(150);
       ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS payment_status VARCHAR(50) DEFAULT 'PAID';
+      ALTER TABLE branches ADD COLUMN IF NOT EXISTS subscription_status VARCHAR(20) DEFAULT 'ACTIVE';
+      ALTER TABLE branches ADD COLUMN IF NOT EXISTS subscription_end_date TIMESTAMP WITH TIME ZONE;
+      ALTER TABLE branches ADD COLUMN IF NOT EXISTS plan_name VARCHAR(100);
       ALTER TABLE bookings ADD COLUMN IF NOT EXISTS booking_number VARCHAR(50);
       ALTER TABLE bookings ADD COLUMN IF NOT EXISTS booking_status VARCHAR(50);
       ALTER TABLE bookings ADD COLUMN IF NOT EXISTS document_url TEXT;
@@ -101,10 +104,11 @@ const server = app.listen(PORT, async () => {
       }
     }
 
-    // Ensure branch_id is present in role_permission_mapping and roles tables
+    // Ensure branch_id and is_active are present in role_permission_mapping and roles tables
     await pool.query(`
       ALTER TABLE public.role_permission_mapping ADD COLUMN IF NOT EXISTS branch_id UUID REFERENCES public.branches(id) ON DELETE CASCADE;
       ALTER TABLE public.roles ADD COLUMN IF NOT EXISTS branch_id UUID REFERENCES public.branches(id) ON DELETE CASCADE;
+      ALTER TABLE public.roles ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
     `);
   } catch (err) {
     console.warn(`⚠️ Warning: Database connection failed. Please verify DATABASE_URL in .env:`, err);

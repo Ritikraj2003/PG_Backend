@@ -183,7 +183,8 @@ export class RbacService {
    */
   public static async getStaff(ownerId: string) {
     const res = await pool.query(
-      `SELECT u.id, u.full_name, u.email, u.mobile_number, u.is_active, u.created_at,
+      `SELECT DISTINCT ON (u.id)
+              u.id, u.full_name, u.email, u.mobile_number, u.is_active, u.created_at,
               r.id as role_id, r.name as role_name,
               b.id as branch_id, b.name as branch_name
        FROM users u
@@ -192,10 +193,10 @@ export class RbacService {
        LEFT JOIN user_branches ub ON u.id = ub.user_id
        LEFT JOIN branches b ON ub.branch_id = b.id
        WHERE u.owner_id = $1
-       ORDER BY u.created_at DESC`,
+       ORDER BY u.id, (CASE WHEN r.name = 'STAFF' THEN 2 ELSE 1 END), u.created_at DESC`,
       [ownerId]
     );
-    return res.rows;
+    return res.rows.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }
 
   /**
@@ -235,20 +236,11 @@ export class RbacService {
       );
       const user = userRes.rows[0];
 
-      // Assign custom/selected role
+      // Assign custom/selected role ONLY
       await client.query(
         'INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)',
         [user.id, data.role_id]
       );
-
-      // Also ensure base STAFF role is assigned for system role authorization
-      const staffRoleRes = await client.query("SELECT id FROM roles WHERE name = 'STAFF' LIMIT 1");
-      if (staffRoleRes.rows.length > 0 && staffRoleRes.rows[0].id !== data.role_id) {
-        await client.query(
-          'INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)',
-          [user.id, staffRoleRes.rows[0].id]
-        );
-      }
 
       // Assign branch if provided
       if (data.branch_id) {
@@ -262,7 +254,8 @@ export class RbacService {
 
       // Fetch created staff details
       const detail = await pool.query(
-        `SELECT u.id, u.full_name, u.email, u.mobile_number, u.is_active, u.created_at,
+        `SELECT DISTINCT ON (u.id)
+                u.id, u.full_name, u.email, u.mobile_number, u.is_active, u.created_at,
                 r.id as role_id, r.name as role_name,
                 b.id as branch_id, b.name as branch_name
          FROM users u
@@ -270,7 +263,8 @@ export class RbacService {
          LEFT JOIN roles r ON ur.role_id = r.id
          LEFT JOIN user_branches ub ON u.id = ub.user_id
          LEFT JOIN branches b ON ub.branch_id = b.id
-         WHERE u.id = $1`,
+         WHERE u.id = $1
+         ORDER BY u.id, (CASE WHEN r.name = 'STAFF' THEN 2 ELSE 1 END)`,
         [user.id]
       );
 
@@ -341,14 +335,6 @@ export class RbacService {
       if (data.role_id) {
         await client.query('DELETE FROM user_roles WHERE user_id = $1', [staffId]);
         await client.query('INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)', [staffId, data.role_id]);
-
-        const staffRoleRes = await client.query("SELECT id FROM roles WHERE name = 'STAFF' LIMIT 1");
-        if (staffRoleRes.rows.length > 0 && staffRoleRes.rows[0].id !== data.role_id) {
-          await client.query(
-            'INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-            [staffId, staffRoleRes.rows[0].id]
-          );
-        }
       }
 
       if (data.branch_id !== undefined) {
@@ -361,7 +347,8 @@ export class RbacService {
       await client.query('COMMIT');
 
       const detail = await pool.query(
-        `SELECT u.id, u.full_name, u.email, u.mobile_number, u.is_active, u.created_at,
+        `SELECT DISTINCT ON (u.id)
+                u.id, u.full_name, u.email, u.mobile_number, u.is_active, u.created_at,
                 r.id as role_id, r.name as role_name,
                 b.id as branch_id, b.name as branch_name
          FROM users u
@@ -369,7 +356,8 @@ export class RbacService {
          LEFT JOIN roles r ON ur.role_id = r.id
          LEFT JOIN user_branches ub ON u.id = ub.user_id
          LEFT JOIN branches b ON ub.branch_id = b.id
-         WHERE u.id = $1`,
+         WHERE u.id = $1
+         ORDER BY u.id, (CASE WHEN r.name = 'STAFF' THEN 2 ELSE 1 END)`,
         [staffId]
       );
       return detail.rows[0];

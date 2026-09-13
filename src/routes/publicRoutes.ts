@@ -12,6 +12,7 @@ router.get('/properties/:id', PublicController.getPropertyById);
 router.get('/branches/:id', PublicController.getBranchById);
 
 // 40 KM Radius Location-Based PG Discovery & Details
+router.get('/locations', PublicController.getRegisteredLocations);
 router.get('/pgs/nearby', PublicController.getNearbyPGs);
 router.get('/pgs/:id', PublicController.getPGById);
 

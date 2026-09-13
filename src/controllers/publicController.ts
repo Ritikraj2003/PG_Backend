@@ -66,12 +66,24 @@ export class PublicController {
     }
   }
 
+  public static async getRegisteredLocations(req: Request, res: Response) {
+    try {
+      const locations = await PublicService.getRegisteredLocations();
+      return sendSuccess(res, locations, 'Registered locations retrieved successfully');
+    } catch (err: any) {
+      return sendError(res, err.message, 500);
+    }
+  }
+
   public static async getNearbyPGs(req: Request, res: Response) {
     try {
       const {
         lat,
         lng,
         radius,
+        filter_radius,
+        city,
+        state,
         search,
         gender,
         min_rent,
@@ -86,6 +98,9 @@ export class PublicController {
         lat: lat !== undefined ? parseFloat(lat as string) : undefined,
         lng: lng !== undefined ? parseFloat(lng as string) : undefined,
         radius: radius !== undefined ? parseFloat(radius as string) : 40,
+        filter_radius: filter_radius === 'true' || filter_radius === '1',
+        city: city as string | undefined,
+        state: state as string | undefined,
         search: search as string | undefined,
         gender: gender as string | undefined,
         min_rent: min_rent !== undefined ? parseFloat(min_rent as string) : undefined,

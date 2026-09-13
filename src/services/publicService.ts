@@ -164,14 +164,37 @@ export class PublicService {
     return roomRes.rows[0];
   }
 
+  public static async getRegisteredLocations() {
+    const sql = `
+      SELECT 
+        TRIM(b.city) as city,
+        TRIM(COALESCE(b.state, '')) as state,
+        MAX(TRIM(COALESCE(b.district, ''))) as district,
+        ROUND(AVG(b.latitude)::numeric, 4) as latitude,
+        ROUND(AVG(b.longitude)::numeric, 4) as longitude,
+        COUNT(b.id) as total_pgs
+      FROM branches b
+      WHERE b.is_active = TRUE AND b.city IS NOT NULL AND TRIM(b.city) != ''
+      GROUP BY TRIM(b.city), TRIM(COALESCE(b.state, ''))
+      ORDER BY total_pgs DESC, city ASC
+    `;
+    const res = await queryNamed(sql, {});
+    return res.rows;
+  }
+
   /**
-   * Location-Based 40 KM Radius PG Discovery (Without Google Maps API)
-   * Uses Haversine formula directly in PostgreSQL
+   * Location-Based PG Discovery
+   * By default returns all registered PGs.
+   * If coords are provided, calculates distance.
+   * If filter_radius is true, restricts to radius in KM.
    */
   public static async getNearbyPGs(options: {
     lat?: number;
     lng?: number;
     radius?: number;
+    filter_radius?: boolean;
+    city?: string;
+    state?: string;
     search?: string;
     gender?: string;
     min_rent?: number;
@@ -188,37 +211,40 @@ export class PublicService {
     const params: Record<string, any> = {};
 
     let distanceSelect = 'NULL::numeric as distance_km';
-    let distanceHaving = '';
 
     if (hasCoords) {
       params.lat = options.lat;
       params.lng = options.lng;
-      params.radius = radius;
 
       // Haversine formula in KM: 6371 * acos(...)
       distanceSelect = `
-        ROUND((
-          6371 * acos(
-            least(1.0, greatest(-1.0,
-              cos(radians(@lat)) * cos(radians(b.latitude)) *
-              cos(radians(b.longitude) - radians(@lng)) +
-              sin(radians(@lat)) * sin(radians(b.latitude))
-            ))
-          )
-        )::numeric, 1) AS distance_km
+        CASE 
+          WHEN b.latitude IS NOT NULL AND b.longitude IS NOT NULL THEN
+            ROUND((
+              6371 * acos(
+                least(1.0::float8, greatest(-1.0::float8,
+                  cos(radians((@lat)::float8)) * cos(radians((b.latitude)::float8)) *
+                  cos(radians((b.longitude)::float8) - radians((@lng)::float8)) +
+                  sin(radians((@lat)::float8)) * sin(radians((b.latitude)::float8))
+                ))
+              )
+            )::numeric, 1)
+          ELSE NULL
+        END AS distance_km
       `;
-      distanceHaving = ` AND (
-        6371 * acos(
-          least(1.0, greatest(-1.0,
-            cos(radians(@lat)) * cos(radians(b.latitude)) *
-            cos(radians(b.longitude) - radians(@lng)) +
-            sin(radians(@lat)) * sin(radians(b.latitude))
-          ))
-        )
-      ) <= @radius`;
     }
 
     let whereConditions = ['b.is_active = TRUE'];
+
+    if (options.city && options.city.trim() && options.city.toUpperCase() !== 'ALL') {
+      params.city = options.city.trim();
+      whereConditions.push(`b.city ILIKE @city`);
+    }
+
+    if (options.state && options.state.trim()) {
+      params.state = options.state.trim();
+      whereConditions.push(`b.state ILIKE @state`);
+    }
 
     if (options.search && options.search.trim()) {
       params.search = `%${options.search.trim()}%`;
@@ -247,16 +273,20 @@ export class PublicService {
     }
 
     let havingConditions: string[] = [];
-    if (hasCoords) {
+    if (hasCoords && options.filter_radius) {
+      params.radius = radius;
       havingConditions.push(`(
-        6371 * acos(
-          least(1.0, greatest(-1.0,
-            cos(radians(@lat)) * cos(radians(b.latitude)) *
-            cos(radians(b.longitude) - radians(@lng)) +
-            sin(radians(@lat)) * sin(radians(b.latitude))
-          ))
-        )
-      ) <= @radius`);
+        b.latitude IS NOT NULL AND b.longitude IS NOT NULL AND
+        (
+          6371 * acos(
+            least(1.0::float8, greatest(-1.0::float8,
+              cos(radians((@lat)::float8)) * cos(radians((b.latitude)::float8)) *
+              cos(radians((b.longitude)::float8) - radians((@lng)::float8)) +
+              sin(radians((@lat)::float8)) * sin(radians((b.latitude)::float8))
+            ))
+          )
+        ) <= (@radius)::float8
+      )`);
     }
 
     if (options.min_rent) {

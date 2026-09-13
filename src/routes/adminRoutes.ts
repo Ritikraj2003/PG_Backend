@@ -65,6 +65,7 @@ router.get('/branches', AdminController.listBranches);
 router.put('/branches/:id', AdminController.updateBranch);
 router.delete('/branches/:id', AdminController.deleteBranch);
 router.post('/branches/:id/renew-subscription', AdminController.renewBranchSubscription);
+router.post('/branches/:id/reactivate', AdminController.reactivateBranch);
 
 // Subscription Plans CRUD
 router.get('/plans', PlanController.listPlans);

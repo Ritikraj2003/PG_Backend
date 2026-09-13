@@ -41,15 +41,19 @@ export const queryNamed = async <T extends QueryResultRow = any>(
   params: Record<string, any>,
   clientOrPool: Pool | PoolClient = pool
 ): Promise<QueryResult<T>> => {
-  const keys = Object.keys(params);
-  let formattedSql = text;
   const values: any[] = [];
+  const paramMap = new Map<string, number>();
 
-  keys.forEach((key, index) => {
-    // Replaces @variable or :variable with $1, $2, $3...
-    const regex = new RegExp(`[@:]${key}\\b`, 'g');
-    formattedSql = formattedSql.replace(regex, `$${index + 1}`);
-    values.push(params[key]);
+  // Replaces @variable or single :variable (excluding ::casts) with $1, $2, etc., dynamically tracking used variables
+  const formattedSql = text.replace(/(?:@|(?<!:):(?!:))([a-zA-Z_]\w*)\b/g, (match, paramName) => {
+    if (paramName in params) {
+      if (!paramMap.has(paramName)) {
+        paramMap.set(paramName, values.length + 1);
+        values.push(params[paramName] !== undefined ? params[paramName] : null);
+      }
+      return `$${paramMap.get(paramName)}`;
+    }
+    return match;
   });
 
   const start = Date.now();

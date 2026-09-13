@@ -16,27 +16,35 @@ async function resetDatabase() {
     await client.query('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"');
     console.log('✅ Schema reset complete.');
 
-    // 2. Run initial schema migrations
-    console.log('📜 Re-creating database tables from schema...');
-    const migrationFile = path.join(__dirname, 'migrations', '001_initial_schema.sql');
-    const migrationSql = fs.readFileSync(migrationFile, 'utf8');
-    await client.query(migrationSql);
-    console.log('✅ All tables re-created successfully.');
+    // 2. Run all schema migrations in order
+    console.log('📜 Executing all database migrations...');
+    const migrationsDir = path.join(__dirname, 'migrations');
+    const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
 
-    // 3. Seed ONLY Super Admin and system roles
-    console.log('🌱 Seeding Super Admin and default system roles...');
+    for (const file of files) {
+      console.log(`Executing migration: ${file}...`);
+      const filePath = path.join(migrationsDir, file);
+      const sql = fs.readFileSync(filePath, 'utf8');
+      await client.query(sql);
+      console.log(`  ✓ ${file} executed successfully`);
+    }
+    console.log('✅ All migrations executed successfully.');
+
+    // 3. Seed ONLY Super Admin, system roles, and permissions
+    console.log('🌱 Seeding Super Admin, roles, and permissions...');
     await client.query('BEGIN');
 
-    // Insert Roles
+    // Insert Default System Roles
     const roles = ['SUPER_ADMIN', 'COMPANY_ADMIN', 'STAFF', 'USER'];
     for (const r of roles) {
-      await client.query(
-        `INSERT INTO roles (name, description) VALUES ($1, $2) ON CONFLICT (name) DO NOTHING`,
-        [r, `${r} role permissions`]
-      );
+      const existing = await client.query("SELECT id FROM roles WHERE name = $1 AND owner_id IS NULL", [r]);
+      if (existing.rows.length === 0) {
+        await client.query("INSERT INTO roles (name, description) VALUES ($1, $2)", [r, `${r} role permissions`]);
+      }
     }
 
-    const superAdminRole = (await client.query("SELECT id FROM roles WHERE name = 'SUPER_ADMIN'")).rows[0].id;
+    const superAdminRoleRes = await client.query("SELECT id FROM roles WHERE name = 'SUPER_ADMIN' AND owner_id IS NULL");
+    const superAdminRole = superAdminRoleRes.rows[0].id;
 
     // Super Admin Password
     const adminPassHash = await hashPassword('admin123');
@@ -45,30 +53,46 @@ async function resetDatabase() {
     const adminRes = await client.query(
       `INSERT INTO users (full_name, email, mobile_number, password_hash, is_active)
        VALUES ('Super Admin', 'admin@pgmanagement.com', '9999999999', $1, TRUE)
+       ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash, is_active = TRUE
        RETURNING id`,
       [adminPassHash]
     );
     const adminId = adminRes.rows[0].id;
+
+    // Assign SUPER_ADMIN role
     await client.query(
-      `INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)`,
+      `INSERT INTO user_roles (user_id, role_id)
+       VALUES ($1, $2)
+       ON CONFLICT (user_id, role_id) DO NOTHING`,
       [adminId, superAdminRole]
     );
+
+    // Map ALL system permissions to SUPER_ADMIN role
+    await client.query(`
+      INSERT INTO role_permission_mapping (role_id, permission_id)
+      SELECT $1, id FROM permissions
+      ON CONFLICT (role_id, permission_id) DO NOTHING
+    `, [superAdminRole]);
+    console.log(`✅ Granted all system permissions to SUPER_ADMIN role.`);
 
     await client.query('COMMIT');
     console.log('🎉 Database wipe & Super Admin seeding completed successfully!');
     console.log('\n=============================================');
     console.log('🔑 SUPER ADMIN LOGIN CREDENTIALS');
-    console.log('Email:    admin@pgmanagement.com');
-    console.log('Password: admin123');
-    console.log('Mobile:   9999999999');
+    console.log('Email:       admin@pgmanagement.com');
+    console.log('Password:    admin123');
+    console.log('Mobile:      9999999999');
+    console.log('Role:        SUPER_ADMIN');
+    console.log('Permissions: All System Permissions Assigned');
     console.log('=============================================\n');
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('❌ Database reset failed:', err);
+    throw err;
   } finally {
     client.release();
     await pool.pool.end();
   }
 }
 
-resetDatabase();
+resetDatabase().catch(() => process.exit(1));

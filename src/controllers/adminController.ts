@@ -134,6 +134,15 @@ export class AdminController {
     }
   }
 
+  public static async reactivateBranch(req: Request, res: Response) {
+    try {
+      const branch = await AdminService.reactivateBranch(req.params.id);
+      return sendSuccess(res, branch, 'Branch reactivated successfully');
+    } catch (err: any) {
+      return sendError(res, err.message, 400);
+    }
+  }
+
   // USERS
   public static async listUsers(req: Request, res: Response) {
     try {
