@@ -39,12 +39,19 @@ export const authenticate = async (req: Request, res: Response, next: NextFuncti
     }
 
     const row = userRes.rows[0];
-    const isOwner = row.roles.includes('COMPANY_ADMIN');
-    const isSuperAdmin = row.roles.includes('SUPER_ADMIN');
+    const propCheck = await pool.query('SELECT id FROM properties WHERE owner_id = $1 LIMIT 1', [row.id]);
+    const hasOwnedProperty = propCheck.rows.length > 0;
 
-    // Ensure staff accounts (linked to an owner or with custom role) include STAFF role
+    const rawRoles: string[] = (row.roles || []).map((r: any) => (typeof r === 'string' ? r.toUpperCase() : ''));
+    const isOwner = rawRoles.includes('COMPANY_ADMIN') || rawRoles.includes('OWNER') || hasOwnedProperty;
+    const isSuperAdmin = rawRoles.includes('SUPER_ADMIN');
+
+    // Ensure staff accounts (linked to an owner or with custom role) include STAFF role, and owners include COMPANY_ADMIN
     const roles: string[] = [...(row.roles || [])];
-    if (row.owner_id && !roles.includes('STAFF')) {
+    if (isOwner && !roles.some((r: string) => r.toUpperCase() === 'COMPANY_ADMIN')) {
+      roles.push('COMPANY_ADMIN');
+    }
+    if (row.owner_id && !roles.some((r: string) => r.toUpperCase() === 'STAFF')) {
       roles.push('STAFF');
     }
 

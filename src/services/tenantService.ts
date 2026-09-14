@@ -284,14 +284,56 @@ export class TenantService {
   }
 
   public static async createComplaint(data: any) {
+    let branch_id = data.branch_id || null;
+    let tenant_id = data.tenant_id || null;
+    let room_id = data.room_id || null;
+
+    // Auto-resolve branch, tenant, and room if not provided
+    if (!branch_id || !tenant_id || !room_id) {
+      const tenantRes = await queryNamed(
+        `SELECT t.id as tenant_id, t.branch_id, b.room_id 
+         FROM tenants t 
+         LEFT JOIN bookings b ON t.booking_id = b.id
+         WHERE t.user_id = @userId AND t.status = 'ACTIVE' 
+         ORDER BY t.created_at DESC LIMIT 1`,
+        { userId: data.user_id }
+      );
+      if (tenantRes.rows.length > 0) {
+        if (!branch_id) branch_id = tenantRes.rows[0].branch_id;
+        if (!tenant_id) tenant_id = tenantRes.rows[0].tenant_id;
+        if (!room_id) room_id = tenantRes.rows[0].room_id;
+      } else {
+        const bkgRes = await queryNamed(
+          `SELECT branch_id, room_id FROM bookings WHERE user_id = @userId AND status NOT IN ('CANCELLED', 'REJECTED') ORDER BY created_at DESC LIMIT 1`,
+          { userId: data.user_id }
+        );
+        if (bkgRes.rows.length > 0) {
+          if (!branch_id) branch_id = bkgRes.rows[0].branch_id;
+          if (!room_id) room_id = bkgRes.rows[0].room_id;
+        }
+      }
+    }
+
+    const ticketSuffix = Math.floor(100000 + Math.random() * 900000);
+    const complaint_number = `CMP-${ticketSuffix}`;
+
     const res = await queryNamed(
-      `INSERT INTO complaints (branch_id, user_id, tenant_id, room_id, title, description, status)
-       VALUES (@branch_id, @user_id, @tenant_id, @room_id, @title, @description, 'OPEN') RETURNING *`,
+      `INSERT INTO complaints (
+         branch_id, user_id, tenant_id, room_id, complaint_number,
+         category, priority, title, description, status
+       )
+       VALUES (
+         @branch_id, @user_id, @tenant_id, @room_id, @complaint_number,
+         @category, @priority, @title, @description, 'OPEN'
+       ) RETURNING *`,
       {
-        branch_id: data.branch_id || null,
+        branch_id,
         user_id: data.user_id,
-        tenant_id: data.tenant_id || null,
-        room_id: data.room_id || null,
+        tenant_id,
+        room_id,
+        complaint_number,
+        category: data.category || 'MAINTENANCE',
+        priority: data.priority || 'MEDIUM',
         title: data.title,
         description: data.description,
       }
@@ -300,7 +342,16 @@ export class TenantService {
   }
 
   public static async getComplaints(userId: string) {
-    const res = await queryNamed('SELECT * FROM complaints WHERE user_id = @userId ORDER BY created_at DESC', { userId });
+    const res = await queryNamed(
+      `SELECT c.*, r.room_number, b.name as branch_name, su.full_name as resolved_by_name
+       FROM complaints c
+       LEFT JOIN rooms r ON c.room_id = r.id
+       LEFT JOIN branches b ON c.branch_id = b.id
+       LEFT JOIN users su ON c.resolved_by = su.id
+       WHERE c.user_id = @userId
+       ORDER BY c.created_at DESC`,
+      { userId }
+    );
     return res.rows;
   }
 

@@ -100,6 +100,7 @@ router.put('/complaints/:id/status', OwnerController.updateComplaintStatus);
 // Expenses
 router.post('/expenses', upload.single('receipt'), verifyBranchOwnership, OwnerController.createExpense);
 router.get('/expenses', OwnerController.getExpenses);
+router.delete('/expenses/:id', verifyBranchOwnership, OwnerController.deleteExpense);
 
 // Notices
 router.post('/notices', verifyBranchOwnership, OwnerController.createNotice);

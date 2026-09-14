@@ -111,6 +111,9 @@ CREATE TABLE IF NOT EXISTS rooms (
     room_type VARCHAR(50) NOT NULL, -- Single, Double, Triple
     monthly_rent NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
     security_deposit NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    electricity_charge NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    maintenance_charge NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    amenities JSONB DEFAULT '[]'::jsonb,
     status VARCHAR(50) DEFAULT 'AVAILABLE', 
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -178,7 +181,7 @@ CREATE TABLE IF NOT EXISTS rent_invoices (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     branch_id UUID REFERENCES branches(id) ON DELETE CASCADE,
     tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
-    invoice_month VARCHAR(20) NOT NULL, -- e.g. '2026-09'
+    invoice_month VARCHAR(100) NOT NULL, -- e.g. '2026-09' or 'Initial Rent & Deposit'
     due_date DATE NOT NULL,
     rent_amount NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
     maintenance_amount NUMERIC(12, 2) DEFAULT 0.00,
@@ -211,10 +214,17 @@ CREATE TABLE IF NOT EXISTS complaints (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     branch_id UUID REFERENCES branches(id) ON DELETE CASCADE,
     tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    room_id UUID REFERENCES rooms(id) ON DELETE SET NULL,
+    complaint_number VARCHAR(50),
+    category VARCHAR(100) DEFAULT 'MAINTENANCE',
+    priority VARCHAR(20) DEFAULT 'MEDIUM',
     title VARCHAR(200) NOT NULL,
     description TEXT NOT NULL,
-    status VARCHAR(50) DEFAULT 'OPEN', -- OPEN, IN_PROGRESS, RESOLVED
+    status VARCHAR(50) DEFAULT 'OPEN', -- OPEN, IN_PROGRESS, RESOLVED, REJECTED
     resolved_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    resolved_at TIMESTAMP WITH TIME ZONE,
+    resolution_notes TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 

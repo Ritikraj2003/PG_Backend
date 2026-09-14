@@ -164,6 +164,9 @@ export class OwnerController {
         room_type: req.body.room_type,
         monthly_rent: req.body.monthly_rent ? parseFloat(req.body.monthly_rent) : 0,
         security_deposit: req.body.security_deposit ? parseFloat(req.body.security_deposit) : 0,
+        electricity_charge: req.body.electricity_charge ? parseFloat(req.body.electricity_charge) : 0,
+        maintenance_charge: req.body.maintenance_charge ? parseFloat(req.body.maintenance_charge) : 0,
+        amenities: typeof req.body.amenities === 'string' ? JSON.parse(req.body.amenities) : (req.body.amenities || []),
         capacity: req.body.capacity ? parseInt(req.body.capacity) : 1,
       };
       const room = await OwnerService.createRoom(roomData);
@@ -320,9 +323,14 @@ export class OwnerController {
   public static async updateComplaintStatus(req: Request, res: Response) {
     try {
       const { id } = req.params;
-      const { status } = req.body;
+      const { status, resolution_note, resolution_notes } = req.body;
       const resolvedBy = status === 'RESOLVED' ? req.user!.id : undefined;
-      const complaint = await OwnerService.updateComplaintStatus(id, status, resolvedBy);
+      const complaint = await OwnerService.updateComplaintStatus(
+        id,
+        status,
+        resolvedBy,
+        resolution_note || resolution_notes
+      );
       return sendSuccess(res, complaint, 'Complaint status updated');
     } catch (err: any) {
       return sendError(res, err.message, 400);
@@ -355,6 +363,17 @@ export class OwnerController {
       return sendSuccess(res, expenses, 'Expenses list retrieved');
     } catch (err: any) {
       return sendError(res, err.message, 500);
+    }
+  }
+
+  public static async deleteExpense(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      const branch_id = req.user?.branchId || (req.query.branch_id as string);
+      await OwnerService.deleteExpense(id, branch_id);
+      return sendSuccess(res, null, 'Expense deleted successfully');
+    } catch (err: any) {
+      return sendError(res, err.message, 400);
     }
   }
 

@@ -326,8 +326,14 @@ export class OwnerService {
     try {
       await client.query('BEGIN');
       const res = await queryNamed(
-        `INSERT INTO rooms (branch_id, floor_number, room_number, room_type, monthly_rent, security_deposit)
-         VALUES (@branchId, @floorNumber, @roomNumber, @roomType, @monthlyRent, @securityDeposit) RETURNING *`,
+        `INSERT INTO rooms (
+           branch_id, floor_number, room_number, room_type, monthly_rent, security_deposit,
+           electricity_charge, maintenance_charge, amenities
+         )
+         VALUES (
+           @branchId, @floorNumber, @roomNumber, @roomType, @monthlyRent, @securityDeposit,
+           @electricityCharge, @maintenanceCharge, @amenities::jsonb
+         ) RETURNING *`,
         {
           branchId: data.branch_id,
           floorNumber: data.floor_number || 1,
@@ -335,6 +341,9 @@ export class OwnerService {
           roomType: data.room_type,
           monthlyRent: data.monthly_rent || 0,
           securityDeposit: data.security_deposit || 0,
+          electricityCharge: data.electricity_charge || 0,
+          maintenanceCharge: data.maintenance_charge || 0,
+          amenities: JSON.stringify(data.amenities || []),
         },
         client
       );
@@ -774,10 +783,59 @@ export class OwnerService {
 
   public static async getPayments(branchId: string) {
     const res = await queryNamed(
-      `SELECT p.*, u.full_name as user_name
+      `SELECT 
+         p.*, 
+         u.full_name as user_name,
+         u.email as user_email,
+         u.mobile_number as user_phone,
+         inv.invoice_month,
+         inv.total_amount as invoice_total,
+         b.booking_number,
+         r.room_number,
+         bed.bed_number,
+         CASE
+           WHEN LOWER(COALESCE(p.remarks, '')) LIKE '%subscription%' 
+             OR LOWER(COALESCE(p.remarks, '')) LIKE '%renewal%' 
+             OR LOWER(COALESCE(p.remarks, '')) LIKE '%plan%' THEN 'SUBSCRIPTION'
+           WHEN p.booking_id IS NOT NULL OR LOWER(COALESCE(p.remarks, '')) LIKE '%booking%' THEN 'BOOKING'
+           WHEN p.invoice_id IS NOT NULL OR LOWER(COALESCE(p.remarks, '')) LIKE '%rent%' THEN 'RENT'
+           ELSE 'OTHER'
+         END as payment_type,
+         CASE
+           WHEN LOWER(COALESCE(p.remarks, '')) LIKE '%subscription%' 
+             OR LOWER(COALESCE(p.remarks, '')) LIKE '%renewal%' 
+             OR LOWER(COALESCE(p.remarks, '')) LIKE '%plan%' THEN TRUE
+           ELSE FALSE
+         END as is_outgoing,
+         CASE
+           WHEN LOWER(COALESCE(p.remarks, '')) LIKE '%subscription%' 
+             OR LOWER(COALESCE(p.remarks, '')) LIKE '%renewal%' 
+             OR LOWER(COALESCE(p.remarks, '')) LIKE '%plan%' THEN 'DEBIT'
+           ELSE 'CREDIT'
+         END as flow_type,
+         CASE
+           WHEN LOWER(COALESCE(p.remarks, '')) LIKE '%subscription%' 
+             OR LOWER(COALESCE(p.remarks, '')) LIKE '%renewal%' 
+             OR LOWER(COALESCE(p.remarks, '')) LIKE '%plan%' 
+             THEN COALESCE(p.remarks, 'Subscription Plan (Paid to SuperAdmin)')
+           WHEN p.booking_id IS NOT NULL AND r.room_number IS NOT NULL 
+             THEN 'Booking • Room ' || r.room_number || COALESCE(' (' || bed.bed_number || ')', '')
+           WHEN p.booking_id IS NOT NULL 
+             THEN 'Room Booking'
+           WHEN p.invoice_id IS NOT NULL AND inv.invoice_month IS NOT NULL 
+             THEN 'Monthly Rent (' || inv.invoice_month || ')'
+           WHEN p.invoice_id IS NOT NULL 
+             THEN 'Rent Payment'
+           ELSE COALESCE(p.remarks, 'General Payment')
+         END as payment_purpose
        FROM payments p
        JOIN users u ON p.user_id = u.id
-       WHERE p.branch_id = @branchId ORDER BY p.created_at DESC`,
+       LEFT JOIN rent_invoices inv ON p.invoice_id = inv.id
+       LEFT JOIN bookings b ON p.booking_id = b.id
+       LEFT JOIN rooms r ON b.room_id = r.id
+       LEFT JOIN beds bed ON b.bed_id = bed.id
+       WHERE p.branch_id = @branchId 
+       ORDER BY p.created_at DESC`,
       { branchId }
     );
     return res.rows;
@@ -822,35 +880,65 @@ export class OwnerService {
   // COMPLAINTS
   public static async getComplaints(branchId: string) {
     const res = await queryNamed(
-      `SELECT c.*, t.tenant_code, u.full_name as tenant_name, su.full_name as resolved_by_name
+      `SELECT c.*, 
+              t.tenant_code, 
+              COALESCE(u.full_name, 'Resident') as tenant_name,
+              u.mobile_number as tenant_phone,
+              u.email as tenant_email,
+              r.room_number,
+              b.name as branch_name,
+              su.full_name as resolved_by_name
        FROM complaints c
-       JOIN tenants t ON c.tenant_id = t.id
-       JOIN users u ON t.user_id = u.id
+       LEFT JOIN tenants t ON c.tenant_id = t.id
+       LEFT JOIN users u ON COALESCE(c.user_id, t.user_id) = u.id
+       LEFT JOIN rooms r ON c.room_id = r.id
+       LEFT JOIN branches b ON c.branch_id = b.id
        LEFT JOIN users su ON c.resolved_by = su.id
-       WHERE c.branch_id = @branchId ORDER BY c.created_at DESC`,
+       WHERE c.branch_id = @branchId 
+       ORDER BY c.created_at DESC`,
       { branchId }
     );
     return res.rows;
   }
 
-  public static async updateComplaintStatus(complaintId: string, status: string, resolvedByUserId?: string) {
+  public static async updateComplaintStatus(complaintId: string, status: string, resolvedByUserId?: string, resolutionNotes?: string) {
+    const validStatuses = ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'REJECTED'];
+    if (!validStatuses.includes(status)) {
+      throw new Error(`Invalid complaint status: ${status}. Must be one of: ${validStatuses.join(', ')}`);
+    }
+
     const res = await queryNamed(
-      `UPDATE complaints SET status = @status, resolved_by = @resolvedBy WHERE id = @complaintId RETURNING *`,
-      { status, resolvedBy: resolvedByUserId || null, complaintId }
+      `UPDATE complaints 
+       SET status = @status::varchar, 
+           resolved_by = CASE WHEN @status::varchar = 'RESOLVED' THEN @resolvedBy::uuid ELSE resolved_by END,
+           resolved_at = CASE WHEN @status::varchar = 'RESOLVED' THEN CURRENT_TIMESTAMP ELSE resolved_at END,
+           resolution_notes = COALESCE(@resolutionNotes, resolution_notes)
+       WHERE id = @complaintId::uuid 
+       RETURNING *`,
+      { 
+        status, 
+        resolvedBy: resolvedByUserId || null, 
+        resolutionNotes: resolutionNotes !== undefined ? resolutionNotes : null, 
+        complaintId 
+      }
     );
     return res.rows[0];
   }
 
   // EXPENSES
   public static async createExpense(data: any) {
+    const title = data.title || data.description || data.category || 'Expense';
     const res = await queryNamed(
-      `INSERT INTO expenses (branch_id, category, amount, expense_date, description, receipt_url)
-       VALUES (@branchId, @category, @amount, @expenseDate, @description, @receiptUrl) RETURNING *`,
+      `INSERT INTO expenses (branch_id, title, category, amount, expense_date, paid_to, payment_method, description, receipt_url)
+       VALUES (@branchId, @title, @category, @amount, @expenseDate, @paidTo, @paymentMethod, @description, @receiptUrl) RETURNING *`,
       {
         branchId: data.branch_id,
-        category: data.category,
-        amount: data.amount,
-        expenseDate: data.expense_date,
+        title,
+        category: data.category || 'General',
+        amount: parseFloat(data.amount),
+        expenseDate: data.expense_date || new Date().toISOString().split('T')[0],
+        paidTo: data.paid_to || null,
+        paymentMethod: data.payment_method || 'UPI',
         description: data.description || null,
         receiptUrl: data.receipt_url || null,
       }
@@ -859,8 +947,17 @@ export class OwnerService {
   }
 
   public static async getExpenses(branchId: string) {
-    const res = await queryNamed('SELECT * FROM expenses WHERE branch_id = @branchId ORDER BY expense_date DESC', { branchId });
+    const res = await queryNamed('SELECT * FROM expenses WHERE branch_id = @branchId ORDER BY expense_date DESC, created_at DESC', { branchId });
     return res.rows;
+  }
+
+  public static async deleteExpense(id: string, branchId?: string) {
+    if (branchId) {
+      await queryNamed('DELETE FROM expenses WHERE id = @id AND branch_id = @branchId', { id, branchId });
+    } else {
+      await queryNamed('DELETE FROM expenses WHERE id = @id', { id });
+    }
+    return { success: true };
   }
 
   // NOTICES

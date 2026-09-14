@@ -65,6 +65,7 @@ export class AuthService {
         { userId: user.id, token: refreshToken }
       );
 
+      const isOwner = roleName === 'COMPANY_ADMIN' || roleName === 'OWNER';
       return {
         user: {
           id: user.id,
@@ -72,6 +73,8 @@ export class AuthService {
           email: user.email,
           mobile_number: user.mobile_number,
           roles: [roleName],
+          is_owner: isOwner,
+          owner_id: isOwner ? user.id : undefined,
         },
         accessToken,
         refreshToken,
@@ -110,12 +113,19 @@ export class AuthService {
       throw new Error('Invalid email/mobile or password');
     }
 
-    const isOwner = user.roles.includes('COMPANY_ADMIN');
-    const isSuperAdmin = user.roles.includes('SUPER_ADMIN');
+    const propCheck = await queryNamed('SELECT id FROM properties WHERE owner_id = @userId LIMIT 1', { userId: user.id });
+    const hasOwnedProperty = propCheck.rows.length > 0;
 
-    // Ensure staff accounts (linked to an owner or with custom role) include STAFF role
+    const rawRoles: string[] = (user.roles || []).map((r: any) => (typeof r === 'string' ? r.toUpperCase() : ''));
+    const isOwner = rawRoles.includes('COMPANY_ADMIN') || rawRoles.includes('OWNER') || hasOwnedProperty;
+    const isSuperAdmin = rawRoles.includes('SUPER_ADMIN');
+
+    // Ensure staff accounts (linked to an owner or with custom role) include STAFF role, and owners include COMPANY_ADMIN
     const userRoles: string[] = [...(user.roles || [])];
-    if (user.owner_id && !userRoles.includes('STAFF')) {
+    if (isOwner && !userRoles.some((r: string) => r.toUpperCase() === 'COMPANY_ADMIN')) {
+      userRoles.push('COMPANY_ADMIN');
+    }
+    if (user.owner_id && !userRoles.some((r: string) => r.toUpperCase() === 'STAFF')) {
       userRoles.push('STAFF');
     }
 

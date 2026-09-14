@@ -88,6 +88,11 @@ const server = app.listen(PORT, async () => {
       ALTER TABLE tenants ADD COLUMN IF NOT EXISTS emergency_contact_relation VARCHAR(50);
       ALTER TABLE complaints ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE CASCADE;
       ALTER TABLE complaints ADD COLUMN IF NOT EXISTS room_id UUID REFERENCES rooms(id) ON DELETE SET NULL;
+      ALTER TABLE complaints ADD COLUMN IF NOT EXISTS complaint_number VARCHAR(50);
+      ALTER TABLE complaints ADD COLUMN IF NOT EXISTS category VARCHAR(100) DEFAULT 'MAINTENANCE';
+      ALTER TABLE complaints ADD COLUMN IF NOT EXISTS priority VARCHAR(20) DEFAULT 'MEDIUM';
+      ALTER TABLE complaints ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP WITH TIME ZONE;
+      ALTER TABLE complaints ADD COLUMN IF NOT EXISTS resolution_notes TEXT;
     `);
 
     const migrationPaths = [

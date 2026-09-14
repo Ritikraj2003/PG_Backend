@@ -352,8 +352,17 @@ export class PublicService {
             'room_number', r.room_number,
             'room_type', r.room_type,
             'monthly_rent', r.monthly_rent,
+            'security_deposit', COALESCE(r.security_deposit, 0),
+            'electricity_charge', COALESCE(r.electricity_charge, 0),
+            'maintenance_charge', COALESCE(r.maintenance_charge, 0),
+            'amenities', COALESCE(r.amenities, '[]'::jsonb),
             'status', r.status,
-            'available_beds', (SELECT COUNT(*) FROM beds b_sub WHERE b_sub.room_id = r.id AND b_sub.status = 'AVAILABLE')
+            'available_beds', (SELECT COUNT(*) FROM beds b_sub WHERE b_sub.room_id = r.id AND b_sub.status = 'AVAILABLE'),
+            'beds', COALESCE(
+              (SELECT json_agg(json_build_object('id', b_sub.id, 'bed_number', b_sub.bed_number, 'status', b_sub.status) ORDER BY b_sub.bed_number ASC)
+               FROM beds b_sub WHERE b_sub.room_id = r.id),
+              '[]'::json
+            )
           )) FILTER (WHERE r.id IS NOT NULL), '[]'::json
         ) as rooms
       FROM branches b
